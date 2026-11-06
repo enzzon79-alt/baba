@@ -1,0 +1,6 @@
+{
+  "name": "BABA SHOPPING | Compra. Revende. Ganha.",
+  "description": "BABA SHOPPING — Plataforma completa de comércio eletrónico em Angola. Compra, revende produtos, negocia preços e gere a tua carteira digital em Kz.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

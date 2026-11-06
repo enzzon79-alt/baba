@@ -1,0 +1,215 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Artigo do catálogo oficial BABA SHOPPING",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "brand": { "type": "string" },
+        "officialPrice": { "type": "number" },
+        "suggestedResalePrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "features": { "type": "array" }
+      },
+      "required": ["id", "name", "category", "officialPrice", "imageUrl"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Utilizador da plataforma BABA SHOPPING",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["client", "admin"] },
+        "accountStatus": { "type": "string", "enum": ["ativo", "em_processamento", "rejeitado"] },
+        "province": { "type": "string" },
+        "city": { "type": "string" },
+        "idNumber": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "idCardFront": { "type": "string" },
+        "idCardBack": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role", "accountStatus"]
+    },
+    "Wallet": {
+      "title": "Wallet",
+      "description": "Carteira digital de saldo e histórico de movimentos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "availableBalance": { "type": "number" },
+        "frozenBalance": { "type": "number" },
+        "totalEarnings": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "transactions": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "availableBalance"]
+    },
+    "ResaleListing": {
+      "title": "ResaleListing",
+      "description": "Anúncio no Mercado de Revenda P2P",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userProductId": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "sellerName": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "category": { "type": "string" },
+        "originalPrice": { "type": "number" },
+        "listingPrice": { "type": "number" },
+        "minAcceptablePrice": { "type": "number" },
+        "customDescription": { "type": "string" },
+        "allowNegotiation": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["ativo", "negociando", "vendido", "cancelado"] },
+        "createdAt": { "type": "string" },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["id", "sellerId", "listingPrice", "status"]
+    },
+    "UserProduct": {
+      "title": "UserProduct",
+      "description": "Produto na secção Meus Produtos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "category": { "type": "string" },
+        "brand": { "type": "string" },
+        "originalPrice": { "type": "number" },
+        "suggestedResalePrice": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "purchaseDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["disponivel", "a_venda", "vendido", "utilizado"] },
+        "activeListingId": { "type": "string" }
+      },
+      "required": ["id", "userId", "productId", "status"]
+    },
+    "Negotiation": {
+      "title": "Negotiation",
+      "description": "Proposta de negociação P2P",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "listingId": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "sellerId": { "type": "string" },
+        "sellerName": { "type": "string" },
+        "productName": { "type": "string" },
+        "originalListingPrice": { "type": "number" },
+        "currentProposedPrice": { "type": "number" },
+        "lastOfferBy": { "type": "string", "enum": ["comprador", "vendedor"] },
+        "status": { "type": "string", "enum": ["pendente_vendedor", "pendente_comprador", "aceite", "recusada", "concluida"] },
+        "messages": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "listingId", "buyerId", "sellerId", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Notificação em tempo real",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string" },
+        "read": { "type": "boolean" },
+        "linkType": { "type": "string" },
+        "linkId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "message", "read"]
+    },
+    "Deposit": {
+      "title": "Deposit",
+      "description": "Pedido de carregamento de carteira",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string" },
+        "reference": { "type": "string" },
+        "receiptProof": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "aprovado", "rejeitado"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "amount", "status"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "Pedido de levantamento de saldo",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "amount": { "type": "number" },
+        "iban": { "type": "string" },
+        "bankName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "processado", "recusado"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "amount", "iban", "status"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Catálogo de produtos oficiais da BABA SHOPPING"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Contas de utilizadores e estado KYC"
+    },
+    "/wallets/{userId}": {
+      "schema": { "$ref": "#/entities/Wallet" },
+      "description": "Carteiras digitais dos utilizadores"
+    },
+    "/resale_listings/{listingId}": {
+      "schema": { "$ref": "#/entities/ResaleListing" },
+      "description": "Mercado P2P de revenda de produtos"
+    },
+    "/user_products/{id}": {
+      "schema": { "$ref": "#/entities/UserProduct" },
+      "description": "Produtos no inventário de cada utilizador"
+    },
+    "/negotiations/{negotiationId}": {
+      "schema": { "$ref": "#/entities/Negotiation" },
+      "description": "Propostas e contrapropostas de preço"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Notificações enviadas aos utilizadores"
+    },
+    "/deposits/{depositId}": {
+      "schema": { "$ref": "#/entities/Deposit" },
+      "description": "Pedidos de carregamento com talão Multicaixa"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/Withdrawal" },
+      "description": "Pedidos de levantamento para conta bancária"
+    }
+  }
+}

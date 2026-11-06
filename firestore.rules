@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Permite leitura e escrita para produtos e utilizadores da plataforma BABA SHOPPING
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    match /wallets/{userId} {
+      allow read, write: if true;
+    }
+    match /resale_listings/{listingId} {
+      allow read, write: if true;
+    }
+    match /user_products/{id} {
+      allow read, write: if true;
+    }
+    match /negotiations/{negotiationId} {
+      allow read, write: if true;
+    }
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+    match /deposits/{depositId} {
+      allow read, write: if true;
+    }
+    match /withdrawals/{withdrawalId} {
+      allow read, write: if true;
+    }
+  }
+}
