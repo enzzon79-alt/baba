@@ -38,7 +38,14 @@ export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
     ? `BABA-${currentUser.name ? currentUser.name.split(' ')[0].toUpperCase() : 'AMIGO'}${currentUser.id ? currentUser.id.slice(-3).toUpperCase() : '94'}`
     : 'BABA-AMIGO94';
 
-  const inviteLink = `https://babashopping.ao/convite?ref=${encodeURIComponent(userCode)}`;
+  const getAppBaseUrl = () => {
+    if (typeof window !== 'undefined' && window.location) {
+      return (window.location.origin + window.location.pathname).replace(/\/+$/, '');
+    }
+    return 'https://ais-pre-phoy7ctpuxm5f3sgpzwe76-708153948394.europe-west2.run.app';
+  };
+  const appBaseUrl = getAppBaseUrl();
+  const inviteLink = `${appBaseUrl}/?ref=${encodeURIComponent(userCode)}`;
   const shareMessage = `Olá! Convido-te a juntar à BABA SHOPPING Angola. Compra produtos originais por atacado em Kwanzas com garantia oficial e revende na plataforma com lucro garantido! Usa o meu código de convite ${userCode} e ganha 500 Kz de bónus de boas-vindas: ${inviteLink}`;
 
   const handleCopyLink = () => {

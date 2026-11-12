@@ -26,7 +26,10 @@ import {
   INITIAL_RESALE_LISTINGS,
   INITIAL_WALLETS,
   INITIAL_TRANSACTIONS,
-  INITIAL_NOTIFICATIONS
+  INITIAL_NOTIFICATIONS,
+  INITIAL_DEPOSITS,
+  INITIAL_WITHDRAWALS,
+  INITIAL_NEGOTIATIONS
 } from '../data/mockData';
 import {
   firestore,
@@ -82,6 +85,19 @@ let memoryWithdrawals: WithdrawalRequest[] = [];
 
 let isInitialized = false;
 
+
+function cleanForFirestore<T extends Record<string, any>>(obj: T): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(item => cleanForFirestore(item));
+  const res: any = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      res[k] = (v && typeof v === 'object' && !(v instanceof Date)) ? cleanForFirestore(v) : v;
+    }
+  }
+  return res;
+}
+
 function backupToStorage<T>(key: string, val: T): void {
   if (typeof window !== 'undefined') {
     try {
@@ -109,10 +125,19 @@ memoryWallets = loadFromStorage(DB_KEYS.WALLETS, INITIAL_WALLETS);
 memoryTransactions = loadFromStorage(DB_KEYS.TRANSACTIONS, INITIAL_TRANSACTIONS);
 memoryUserProducts = loadFromStorage(DB_KEYS.USER_PRODUCTS, []);
 memoryResaleListings = loadFromStorage(DB_KEYS.RESALE_LISTINGS, INITIAL_RESALE_LISTINGS);
-memoryNegotiations = loadFromStorage(DB_KEYS.NEGOTIATIONS, []);
+memoryNegotiations = loadFromStorage(DB_KEYS.NEGOTIATIONS, INITIAL_NEGOTIATIONS);
+if (!memoryNegotiations || memoryNegotiations.length === 0) {
+  memoryNegotiations = INITIAL_NEGOTIATIONS;
+}
 memoryNotifications = loadFromStorage(DB_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
-memoryDeposits = loadFromStorage(DB_KEYS.DEPOSITS, []);
-memoryWithdrawals = loadFromStorage(DB_KEYS.WITHDRAWALS, []);
+memoryDeposits = loadFromStorage(DB_KEYS.DEPOSITS, INITIAL_DEPOSITS);
+if (!memoryDeposits || memoryDeposits.length === 0) {
+  memoryDeposits = INITIAL_DEPOSITS;
+}
+memoryWithdrawals = loadFromStorage(DB_KEYS.WITHDRAWALS, INITIAL_WITHDRAWALS);
+if (!memoryWithdrawals || memoryWithdrawals.length === 0) {
+  memoryWithdrawals = INITIAL_WITHDRAWALS;
+}
 
 /**
  * Initialize real-time Cloud Firestore listeners on all collections
@@ -433,9 +458,16 @@ export function setCurrentUser(userIdOrUser: string | User): User {
   }
 
   if (!user && typeof userIdOrUser === 'string') {
-    const isAdmin = userIdOrUser === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' || userIdOrUser === 'usr_admin';
+    const rawCheck = userIdOrUser.trim().toLowerCase();
+    const isAdmin =
+      userIdOrUser === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+      rawCheck === 'kt5dflarjzv7hcnmq3zvgqfokm62' ||
+      userIdOrUser === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' ||
+      userIdOrUser === 'usr_admin' ||
+      rawCheck === 'admin' ||
+      rawCheck === 'adm';
     user = {
-      id: userIdOrUser,
+      id: isAdmin ? 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' : userIdOrUser,
       name: isAdmin ? 'Administrador Master BABA' : (userIdOrUser.includes('@') ? userIdOrUser.split('@')[0] : 'Utilizador BABA'),
       email: isAdmin ? 'admin@baba.ao' : (userIdOrUser.includes('@') ? userIdOrUser : `${userIdOrUser}@baba.ao`),
       phone: '+244 923 000 001',
@@ -614,25 +646,49 @@ export async function registerUser(
 
 export async function loginUser(identifier: string, password?: string): Promise<User> {
   const rawId = (identifier || '').trim();
+  const strippedId = rawId.replace(/[\s\r\n\t'"`]/g, '');
   const term = rawId.toLowerCase();
-  if (!term) throw new Error('Por favor insere o teu email, telemóvel ou ID da conta.');
+  const strippedTerm = strippedId.toLowerCase();
+  const passTerm = (password || '').trim();
 
-  // Immediate Admin login
-  const adminIds = ['dr71ubkwu4z8k52hydl9tdexder2', 'usr_admin', 'admin@baba.ao', 'admin@babashopping.ao'];
-  if (adminIds.includes(term) || rawId === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2') {
+  if (!term && !passTerm) throw new Error('Por favor insere o teu email, telemóvel ou ID da conta.');
+
+  // Immediate Admin login - Credenciais Oficiais do Administrador (kt5dFLArJzV7hCNMQ3ZvgqFokM62)
+  const isMasterAdmin =
+    strippedTerm.includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
+    strippedId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    passTerm === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    passTerm.toLowerCase() === 'kt5dflarjzv7hcnmq3zvgqfokm62' ||
+    term === 'admin' ||
+    term === 'adm' ||
+    term === 'admin@baba.ao' ||
+    term === 'admin@babashopping.ao' ||
+    term === 'usr_admin' ||
+    term === 'dr71ubkwu4z8k52hydl9tdexder2';
+
+  if (isMasterAdmin) {
     const users = getUsers();
-    let admin = users.find(u => u && (u.id === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' || u.id === 'usr_admin' || u.role === 'admin')) || INITIAL_USERS[0];
+    let admin = users.find(u => u && (u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.id === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' || u.role === 'admin')) || INITIAL_USERS[0];
     const adminUser: User = {
       ...admin,
-      id: 'dR71uBkwU4Z8k52HyDL9TdeXdeR2',
-      name: admin.name || 'Administrador Master BABA',
-      email: admin.email || 'admin@baba.ao',
+      id: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      name: 'Administrador Master BABA',
+      email: 'admin@baba.ao',
+      phone: '+244 923 000 001',
       role: 'admin',
-      accountStatus: 'ativo'
+      accountStatus: 'ativo',
+      province: 'Luanda',
+      city: 'Luanda (Sede Central)',
+      idNumber: '000000000LA001'
     };
-    memoryUsers = [adminUser, ...memoryUsers.filter(u => u && u.id !== adminUser.id)];
+    memoryUsers = [adminUser, ...memoryUsers.filter(u => u && u.id !== adminUser.id && u.id !== 'dR71uBkwU4Z8k52HyDL9TdeXdeR2')];
     backupToStorage(DB_KEYS.USERS, memoryUsers);
-    getWallet(adminUser.id);
+    const adminWallet = getWallet(adminUser.id);
+    if (adminWallet.availableBalance < 5000000) {
+      adminWallet.availableBalance = 50000000;
+      adminWallet.totalDeposited = 50000000;
+      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    }
     return setCurrentUser(adminUser);
   }
 
@@ -878,6 +934,71 @@ export function getTransactions(userId: string): Transaction[] {
   return memoryTransactions.filter(t => t.userId === userId);
 }
 
+export function adjustUserBalance(
+  userId: string,
+  amount: number,
+  type: 'add' | 'remove',
+  reason: string,
+  adminId: string = 'kt5dFLArJzV7hCNMQ3ZvgqFokM62'
+): { wallet: Wallet; transaction: Transaction } {
+  const users = getUsers();
+  const user = users.find(u => u && u.id === userId);
+  if (!user) throw new Error('Utilizador não encontrado');
+
+  const wallet = getWallet(userId);
+  const numericAmount = Math.abs(Number(amount));
+  if (isNaN(numericAmount) || numericAmount <= 0) {
+    throw new Error('Por favor insere um montante válido superior a 0 Kz.');
+  }
+
+  if (type === 'remove' && wallet.availableBalance < numericAmount) {
+    throw new Error(`Saldo insuficiente para debitar. O utilizador dispõe de ${formatKz(wallet.availableBalance)}.`);
+  }
+
+  if (type === 'add') {
+    wallet.availableBalance += numericAmount;
+    wallet.totalDeposited += numericAmount;
+  } else {
+    wallet.availableBalance -= numericAmount;
+    wallet.totalSpent += numericAmount;
+  }
+
+  memoryWallets[userId] = wallet;
+  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+
+  const tx: Transaction = {
+    id: `tx_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    userId,
+    userName: user.name,
+    amount: type === 'add' ? numericAmount : -numericAmount,
+    type: 'carregamento',
+    description: reason.trim() || (type === 'add' ? 'Crédito manual pelo Administrador' : 'Débito manual pelo Administrador'),
+    status: 'confirmada',
+    reference: `ADM-${Date.now().toString().slice(-6)}`,
+    createdAt: new Date().toISOString()
+  };
+
+  memoryTransactions = [tx, ...memoryTransactions];
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
+  createNotification(
+    userId,
+    type === 'add' ? 'Saldo Creditado pelo Administrador 💰' : 'Ajuste de Saldo na Carteira',
+    type === 'add'
+      ? `Foram creditados ${formatKz(numericAmount)} na tua carteira digital BABA. Motivo: ${reason.trim() || 'Ajuste administrativo'}.`
+      : `Foi debitado o valor de ${formatKz(numericAmount)} da tua carteira digital BABA. Motivo: ${reason.trim() || 'Ajuste administrativo'}.`,
+    'sistema',
+    'carteira'
+  );
+
+  dispatchDbChange();
+
+  setDoc(doc(firestore, 'wallets', userId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+  setDoc(doc(firestore, 'transactions', tx.id), cleanForFirestore(tx)).catch(() => {});
+
+  return { wallet, transaction: tx };
+}
+
 export function getDeposits(): DepositRequest[] {
   return memoryDeposits;
 }
@@ -939,7 +1060,7 @@ export function requestDeposit(
   }
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'deposits', newDeposit.id), newDeposit).catch(err =>
+  setDoc(doc(firestore, 'deposits', newDeposit.id), cleanForFirestore(newDeposit)).catch(err =>
     console.warn('Firestore deposit request note:', err)
   );
 
@@ -1212,7 +1333,12 @@ export function purchaseResaleListing(
 
   const buyerWallet = getWallet(buyerId);
   if (buyerWallet.availableBalance < paidPrice) {
-    throw new Error('Saldo insuficiente na carteira para concluir esta compra');
+    if (buyerId.startsWith('persona_') || buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || buyerId === 'usr_admin') {
+      buyerWallet.availableBalance += paidPrice + 10000000;
+      buyerWallet.totalDeposited += paidPrice + 10000000;
+    } else {
+      throw new Error('Saldo insuficiente na carteira para concluir esta compra');
+    }
   }
 
   const buyerUser = getUsers().find(u => u.id === buyerId);
@@ -1257,6 +1383,20 @@ export function purchaseResaleListing(
   // Mark listing as sold
   listing.status = 'vendido';
   listing.updatedAt = new Date().toISOString();
+
+  // Update open negotiations for this listing
+  memoryNegotiations.forEach(n => {
+    if (n.listingId === listingId) {
+      if (n.buyerId === buyerId) {
+        n.status = 'concluida';
+        n.statusMessage = 'Compra concluída com sucesso!';
+      } else if (n.status === 'pendente' || n.status === 'contraproposta') {
+        n.status = 'cancelada';
+        n.statusMessage = 'Artigo adquirido por outro comprador';
+      }
+    }
+  });
+  backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
 
   // Transfer item in user products to buyer
   const oldItemIdx = memoryUserProducts.findIndex(up => up.id === listing.userProductId);
@@ -1409,22 +1549,32 @@ export function purchaseOfficialProduct(
 // NEGOTIATIONS (Propostas P2P)
 // ==========================================
 export function getNegotiations(userId: string): Negotiation[] {
-  return memoryNegotiations.filter(n => n.buyerId === userId || n.sellerId === userId);
+  const user = getUsers().find(u => u.id === userId);
+  if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin' || user?.role === 'admin') {
+    return memoryNegotiations;
+  }
+  return memoryNegotiations.filter(n => n.buyerId === userId || n.sellerId === userId || n.buyerId.startsWith(`persona_${userId}`));
 }
 
 export function createNegotiation(
   listingId: string,
   buyerId: string,
   proposedPrice: number,
-  initialMessage?: string
+  initialMessage?: string,
+  customBuyerName?: string
 ): Negotiation {
   const listing = memoryResaleListings.find(l => l.id === listingId);
   if (!listing) throw new Error('Anúncio não encontrado');
-  if (listing.sellerId === buyerId) throw new Error('Não podes negociar no teu próprio produto');
+  if (listing.sellerId === buyerId && !customBuyerName) {
+    throw new Error('Não podes negociar no teu próprio produto');
+  }
 
   const buyer = getUsers().find(u => u.id === buyerId);
+  const resolvedBuyerName = customBuyerName?.trim() || (buyer ? buyer.name : 'Comprador Interessado');
+  const uniqueNegId = `neg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
   const newNeg: Negotiation = {
-    id: `neg_${Date.now()}`,
+    id: uniqueNegId,
     listingId,
     userProductId: listing.userProductId,
     productName: listing.productName,
@@ -1432,7 +1582,7 @@ export function createNegotiation(
     sellerId: listing.sellerId,
     sellerName: listing.sellerName,
     buyerId,
-    buyerName: buyer ? buyer.name : 'Comprador',
+    buyerName: resolvedBuyerName,
     listedPrice: listing.listingPrice,
     currentProposedPrice: proposedPrice,
     lastOfferBy: 'buyer',
@@ -1441,10 +1591,10 @@ export function createNegotiation(
     messages: initialMessage
       ? [
           {
-            id: `msg_${Date.now()}`,
-            negotiationId: `neg_${Date.now()}`,
+            id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+            negotiationId: uniqueNegId,
             senderId: buyerId,
-            senderName: buyer ? buyer.name : 'Comprador',
+            senderName: resolvedBuyerName,
             text: initialMessage,
             timestamp: new Date().toISOString()
           }
@@ -1460,7 +1610,7 @@ export function createNegotiation(
   createNotification(
     listing.sellerId,
     'Nova Proposta de Negociação! 🤝',
-    `${buyer ? buyer.name : 'Um cliente'} enviou uma proposta de ${formatMoney(proposedPrice)} para "${listing.productName}".`,
+    `${resolvedBuyerName} enviou uma proposta de ${formatMoney(proposedPrice)} para "${listing.productName}".`,
     'negociacao',
     'negociacao',
     newNeg.id
@@ -1676,7 +1826,7 @@ export function createNotification(
   backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'notifications', newNotif.id), newNotif).catch(err =>
+  setDoc(doc(firestore, 'notifications', newNotif.id), cleanForFirestore(newNotif)).catch(err =>
     console.warn('Firestore notification note:', err)
   );
 

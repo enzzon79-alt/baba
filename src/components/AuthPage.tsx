@@ -102,8 +102,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [registeredUser, setRegisteredUser] = useState<UserType | null>(null);
 
   // Login form state
-  const [loginIdentifier, setLoginIdentifier] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState('kt5dFLArJzV7hCNMQ3ZvgqFokM62');
+  const [loginPassword, setLoginPassword] = useState('BABA2026!');
   const [showLoginPass, setShowLoginPass] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -327,7 +327,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+          <button
+            type="button"
+            onClick={() => handleQuickLogin('kt5dFLArJzV7hCNMQ3ZvgqFokM62')}
+            className="text-xs font-black text-amber-950 bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 px-3 py-2 rounded-xl shadow-xs border border-amber-400 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+            title="Acesso Automático do Administrador Master (kt5dFLArJzV7hCNMQ3ZvgqFokM62)"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-950" />
+            <span className="hidden sm:inline">Entrar como</span>
+            <span>Adm</span>
+            <span className="text-[9px] bg-neutral-950 text-amber-300 px-1 py-0.2 rounded font-mono">kt5d...M62</span>
+          </button>
+
           {step !== 'login' ? (
             <button
               type="button"
@@ -446,7 +458,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 </span>
               </div>
 
-              {/* Botão de Ação: Criar Conta */}
+              {/* Botões de Ação */}
               <div className="space-y-3 pt-2">
                 <button
                   type="button"
@@ -456,6 +468,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   <UserPlus className="w-5 h-5" />
                   <span>Criar Conta na BABA SHOPPING</span>
                   <ArrowRight className="w-5 h-5" />
+                </button>
+
+                {/* Direct Admin Master Access Button */}
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('kt5dFLArJzV7hCNMQ3ZvgqFokM62')}
+                  className="w-full py-3.5 px-4 bg-neutral-950 hover:bg-neutral-900 text-amber-400 font-black text-xs sm:text-sm rounded-2xl border-2 border-amber-400/80 shadow-lg shadow-amber-400/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                >
+                  <ShieldCheck className="w-4 h-4 text-amber-400" />
+                  <span>Entrar como Administrador (kt5dFLArJzV7hCNMQ3ZvgqFokM62)</span>
+                  <ArrowRight className="w-4 h-4 text-amber-400" />
                 </button>
 
                 <div className="text-center">
@@ -1043,9 +1066,33 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 </div>
               )}
 
+              {/* Master Admin Detection Banner */}
+              {(loginIdentifier.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+                loginIdentifier.trim().toLowerCase().includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
+                loginPassword.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+                loginIdentifier.trim().toLowerCase() === 'admin' ||
+                loginIdentifier.trim().toLowerCase() === 'adm') && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 text-neutral-950 font-bold text-xs border border-amber-500 shadow-md flex items-center gap-3 animate-fadeIn">
+                  <div className="w-9 h-9 rounded-xl bg-neutral-950 text-amber-400 flex items-center justify-center shrink-0 shadow-xs">
+                    <ShieldCheck className="w-5 h-5 text-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-black uppercase text-[10px] tracking-wider bg-neutral-950 text-amber-400 px-2 py-0.5 rounded">
+                        ADMIN MASTER DETETADO
+                      </span>
+                      <span className="text-[10px] text-neutral-900 font-mono font-bold">kt5d...M62</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-950 mt-0.5 font-bold leading-tight">
+                      Ao clicar no botão abaixo, entrarás diretamente e de forma automática no Painel do Administrador com controlo total!
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-bold text-neutral-800 block mb-1">
-                  Email ou Telemóvel da Conta:
+                  Email, Telemóvel ou ID do Administrador:
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1053,17 +1100,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     type="text"
                     value={loginIdentifier}
                     onChange={e => setLoginIdentifier(e.target.value)}
-                    placeholder="ex: 939393939 ou enzzon79@gmail.com"
+                    placeholder="kt5dFLArJzV7hCNMQ3ZvgqFokM62, telemóvel ou email"
                     required
                     autoComplete="username"
                     className="w-full pl-10 pr-3.5 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
                 </div>
+                <span className="text-[10px] text-neutral-500 mt-1 block">
+                  Podes colar o teu ID <strong>kt5dFLArJzV7hCNMQ3ZvgqFokM62</strong> para aceder de imediato.
+                </span>
               </div>
 
               <div>
                 <label className="text-xs font-bold text-neutral-800 block mb-1">
-                  Palavra-passe:
+                  Palavra-passe (Opcional para ID de Administrador):
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1071,7 +1121,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     type={showLoginPass ? 'text' : 'password'}
                     value={loginPassword}
                     onChange={e => setLoginPassword(e.target.value)}
-                    placeholder="Digita a tua palavra-passe ou BABA2026!"
+                    placeholder="Digita a tua palavra-passe (ou entra direto com o ID)"
                     autoComplete="current-password"
                     className="w-full pl-10 pr-10 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
@@ -1088,16 +1138,67 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full py-3.5 px-4 bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white font-extrabold text-sm rounded-xl shadow-md shadow-orange-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
+                className={`w-full py-3.5 px-4 font-black text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50 ${
+                  loginIdentifier.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+                  loginIdentifier.trim().toLowerCase().includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
+                  loginPassword.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+                  loginIdentifier.trim().toLowerCase() === 'admin' ||
+                  loginIdentifier.trim().toLowerCase() === 'adm'
+                    ? 'bg-neutral-950 hover:bg-neutral-900 text-amber-400 border border-amber-400/50 shadow-lg shadow-amber-500/20'
+                    : 'bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white shadow-orange-500/20'
+                }`}
               >
-                <LogIn className="w-4 h-4" />
-                <span>{isSubmitting ? 'A entrar na conta...' : 'Entrar na Conta'}</span>
+                {loginIdentifier.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+                loginIdentifier.trim().toLowerCase().includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
+                loginPassword.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+                loginIdentifier.trim().toLowerCase() === 'admin' ||
+                loginIdentifier.trim().toLowerCase() === 'adm' ? (
+                  <>
+                    <ShieldCheck className="w-4 h-4 text-amber-400" />
+                    <span>{isSubmitting ? 'A aceder ao painel...' : '⚡ Entrar Automaticamente no Painel do Adm'}</span>
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="w-4 h-4" />
+                    <span>{isSubmitting ? 'A entrar na conta...' : 'Entrar na Conta'}</span>
+                  </>
+                )}
               </button>
 
+              {/* Botão de 1 Clique para Administrador */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogin('kt5dFLArJzV7hCNMQ3ZvgqFokM62')}
+                  className="w-full p-3.5 rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-neutral-950 via-slate-900 to-neutral-950 text-white hover:border-amber-300 transition-all cursor-pointer shadow-md flex items-center justify-between gap-3 text-left group"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-amber-400 text-neutral-950 flex items-center justify-center font-black shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                      <ShieldCheck className="w-5 h-5 text-neutral-950" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-amber-400 text-xs">Acesso Direto: Administrador Master</span>
+                        <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.2 rounded font-mono font-bold">
+                          kt5dFLArJzV7hCNMQ3ZvgqFokM62
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 mt-0.5 truncate">
+                        Entra automaticamente no Painel com todos os utilizadores, saldos e mercado
+                      </p>
+                    </div>
+                  </div>
+                  <div className="px-3 py-1.5 rounded-xl bg-amber-400 text-neutral-950 font-black text-xs shrink-0 flex items-center gap-1 shadow-sm group-hover:bg-amber-300">
+                    <span>Entrar Já</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </div>
+                </button>
+              </div>
+
               {/* Contas de Acesso Rápido para Testes */}
-              <div className="pt-4 border-t border-neutral-100 space-y-2">
+              <div className="pt-3 border-t border-neutral-100 space-y-2">
                 <span className="text-[10px] uppercase font-bold text-neutral-400 block text-center">
-                  Contas de Demonstração / Testes Imediatos:
+                  Outras Contas de Demonstração:
                 </span>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <button
@@ -1110,11 +1211,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickLogin('admin@baba.ao')}
-                    className="p-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-left transition-colors cursor-pointer"
+                    onClick={() => handleQuickLogin('antonio@baba.ao')}
+                    className="p-2.5 rounded-xl border border-neutral-200 bg-neutral-50 hover:bg-neutral-100 text-left transition-colors cursor-pointer"
                   >
-                    <div className="font-black text-amber-950 truncate">Super Admin</div>
-                    <div className="text-[10px] text-amber-700">Gestão Total</div>
+                    <div className="font-bold text-neutral-900 truncate">António Kwanza</div>
+                    <div className="text-[10px] text-amber-600">Em Processamento</div>
                   </button>
                 </div>
               </div>
