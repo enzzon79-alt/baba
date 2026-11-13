@@ -87,8 +87,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [regPhone, setRegPhone] = useState('+244 9');
   const [regProvince, setRegProvince] = useState('Luanda');
   const [regCity, setRegCity] = useState('Luanda (Talatona)');
-  const [regPassword, setRegPassword] = useState('BABA2026!');
-  const [regConfirmPassword, setRegConfirmPassword] = useState('BABA2026!');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [showRegPass, setShowRegPass] = useState(false);
   const [regError, setRegError] = useState<string | null>(null);
 
@@ -101,9 +101,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   // Processed registered user state
   const [registeredUser, setRegisteredUser] = useState<UserType | null>(null);
 
-  // Login form state
-  const [loginIdentifier, setLoginIdentifier] = useState('kt5dFLArJzV7hCNMQ3ZvgqFokM62');
-  const [loginPassword, setLoginPassword] = useState('BABA2026!');
+  // Login form state (strictly empty by default — requires existing account + password)
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPass, setShowLoginPass] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
@@ -247,52 +247,38 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setStep('approved');
   };
 
-  // 4. Entrar na plataforma final
+  // 4. Entrar na plataforma final após criação da conta
   const handleEnterPlatform = () => {
     if (registeredUser) {
       registeredUser.accountStatus = 'ativo';
       onLoginSuccess(registeredUser);
     } else {
-      // Fallback
-      loginUser(regEmail.trim() || 'domingos@baba.ao', regPassword || 'BABA2026!')
-        .then(u => onLoginSuccess(u))
-        .catch(() => {
-          loginUser('usr_domingos', 'BABA2026!').then(u => onLoginSuccess(u));
-        });
+      setStep('login');
     }
   };
 
-  // 5. Iniciar sessão tradicional (Login)
+  // 5. Iniciar sessão (requer conta existente + palavra-passe válida)
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
     const rawId = loginIdentifier.trim();
+    const rawPass = loginPassword.trim();
     if (!rawId) {
-      setLoginError('Por favor insere o teu email, telemóvel ou ID.');
+      setLoginError('Por favor insere o teu número de telefone, email ou Nº do BI.');
+      return;
+    }
+    if (!rawPass) {
+      setLoginError('Por favor insere a tua palavra-passe.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const user = await loginUser(rawId, loginPassword.trim() || 'BABA2026!');
+      const user = await loginUser(rawId, rawPass);
       onLoginSuccess(user);
     } catch (err: any) {
-      setLoginError(err?.message || 'Credenciais inválidas. Verifica os dados ou seleciona uma conta de acesso rápido.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleQuickLogin = async (identifier: string) => {
-    setLoginError(null);
-    setLoginIdentifier(identifier);
-    setIsSubmitting(true);
-    try {
-      const user = await loginUser(identifier, 'BABA2026!');
-      onLoginSuccess(user);
-    } catch (err: any) {
-      setLoginError('Não foi possível aceder à conta selecionada.');
+      setLoginError(err?.message || 'Credenciais inválidas. Verifica os teus dados ou cria uma nova conta.');
     } finally {
       setIsSubmitting(false);
     }
@@ -328,18 +314,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
-          <button
-            type="button"
-            onClick={() => handleQuickLogin('kt5dFLArJzV7hCNMQ3ZvgqFokM62')}
-            className="text-xs font-black text-amber-950 bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 px-3 py-2 rounded-xl shadow-xs border border-amber-400 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
-            title="Acesso Automático do Administrador Master (kt5dFLArJzV7hCNMQ3ZvgqFokM62)"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-amber-950" />
-            <span className="hidden sm:inline">Entrar como</span>
-            <span>Adm</span>
-            <span className="text-[9px] bg-neutral-950 text-amber-300 px-1 py-0.2 rounded font-mono">kt5d...M62</span>
-          </button>
-
           {step !== 'login' ? (
             <button
               type="button"
@@ -470,26 +444,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   <ArrowRight className="w-5 h-5" />
                 </button>
 
-                {/* Direct Admin Master Access Button */}
                 <button
                   type="button"
-                  onClick={() => handleQuickLogin('kt5dFLArJzV7hCNMQ3ZvgqFokM62')}
-                  className="w-full py-3.5 px-4 bg-neutral-950 hover:bg-neutral-900 text-amber-400 font-black text-xs sm:text-sm rounded-2xl border-2 border-amber-400/80 shadow-lg shadow-amber-400/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                  onClick={() => setStep('login')}
+                  className="w-full py-3.5 px-4 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-sm rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                 >
-                  <ShieldCheck className="w-4 h-4 text-amber-400" />
-                  <span>Entrar como Administrador (kt5dFLArJzV7hCNMQ3ZvgqFokM62)</span>
-                  <ArrowRight className="w-4 h-4 text-amber-400" />
+                  <LogIn className="w-4 h-4 text-[#FF6A00]" />
+                  <span>Já Tenho Conta — Iniciar Sessão</span>
                 </button>
-
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => setStep('login')}
-                    className="text-xs font-bold text-neutral-600 hover:text-neutral-950 transition-colors cursor-pointer"
-                  >
-                    Já tens uma conta registada? <span className="text-[#FF6A00] underline font-extrabold">Iniciar Sessão</span>
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -1066,33 +1028,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 </div>
               )}
 
-              {/* Master Admin Detection Banner */}
-              {(loginIdentifier.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-                loginIdentifier.trim().toLowerCase().includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
-                loginPassword.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-                loginIdentifier.trim().toLowerCase() === 'admin' ||
-                loginIdentifier.trim().toLowerCase() === 'adm') && (
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 text-neutral-950 font-bold text-xs border border-amber-500 shadow-md flex items-center gap-3 animate-fadeIn">
-                  <div className="w-9 h-9 rounded-xl bg-neutral-950 text-amber-400 flex items-center justify-center shrink-0 shadow-xs">
-                    <ShieldCheck className="w-5 h-5 text-amber-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-black uppercase text-[10px] tracking-wider bg-neutral-950 text-amber-400 px-2 py-0.5 rounded">
-                        ADMIN MASTER DETETADO
-                      </span>
-                      <span className="text-[10px] text-neutral-900 font-mono font-bold">kt5d...M62</span>
-                    </div>
-                    <p className="text-[11px] text-neutral-950 mt-0.5 font-bold leading-tight">
-                      Ao clicar no botão abaixo, entrarás diretamente e de forma automática no Painel do Administrador com controlo total!
-                    </p>
-                  </div>
-                </div>
-              )}
-
               <div>
                 <label className="text-xs font-bold text-neutral-800 block mb-1">
-                  Email, Telemóvel ou ID do Administrador:
+                  Número de Telefone ou Email: *
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1100,20 +1038,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     type="text"
                     value={loginIdentifier}
                     onChange={e => setLoginIdentifier(e.target.value)}
-                    placeholder="kt5dFLArJzV7hCNMQ3ZvgqFokM62, telemóvel ou email"
+                    placeholder="Ex: 923 000 000 ou teuemail@gmail.com"
                     required
                     autoComplete="username"
                     className="w-full pl-10 pr-3.5 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
                 </div>
-                <span className="text-[10px] text-neutral-500 mt-1 block">
-                  Podes colar o teu ID <strong>kt5dFLArJzV7hCNMQ3ZvgqFokM62</strong> para aceder de imediato.
-                </span>
               </div>
 
               <div>
                 <label className="text-xs font-bold text-neutral-800 block mb-1">
-                  Palavra-passe (Opcional para ID de Administrador):
+                  Palavra-passe: *
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -1121,7 +1056,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     type={showLoginPass ? 'text' : 'password'}
                     value={loginPassword}
                     onChange={e => setLoginPassword(e.target.value)}
-                    placeholder="Digita a tua palavra-passe (ou entra direto com o ID)"
+                    placeholder="Digita a tua palavra-passe"
+                    required
                     autoComplete="current-password"
                     className="w-full pl-10 pr-10 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
@@ -1138,95 +1074,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className={`w-full py-3.5 px-4 font-black text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50 ${
-                  loginIdentifier.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-                  loginIdentifier.trim().toLowerCase().includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
-                  loginPassword.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-                  loginIdentifier.trim().toLowerCase() === 'admin' ||
-                  loginIdentifier.trim().toLowerCase() === 'adm'
-                    ? 'bg-neutral-950 hover:bg-neutral-900 text-amber-400 border border-amber-400/50 shadow-lg shadow-amber-500/20'
-                    : 'bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white shadow-orange-500/20'
-                }`}
+                className="w-full py-3.5 px-4 font-black text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50 bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white shadow-orange-500/20"
               >
-                {loginIdentifier.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-                loginIdentifier.trim().toLowerCase().includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
-                loginPassword.trim() === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-                loginIdentifier.trim().toLowerCase() === 'admin' ||
-                loginIdentifier.trim().toLowerCase() === 'adm' ? (
-                  <>
-                    <ShieldCheck className="w-4 h-4 text-amber-400" />
-                    <span>{isSubmitting ? 'A aceder ao painel...' : '⚡ Entrar Automaticamente no Painel do Adm'}</span>
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="w-4 h-4" />
-                    <span>{isSubmitting ? 'A entrar na conta...' : 'Entrar na Conta'}</span>
-                  </>
-                )}
+                <LogIn className="w-4 h-4" />
+                <span>{isSubmitting ? 'A verificar dados...' : 'Entrar na Conta'}</span>
               </button>
 
-              {/* Botão de 1 Clique para Administrador */}
-              <div className="pt-2">
+              <div className="pt-3 border-t border-neutral-100 text-center space-y-2">
+                <p className="text-xs text-neutral-500">
+                  Ainda não tens conta na BABA SHOPPING?
+                </p>
                 <button
                   type="button"
-                  onClick={() => handleQuickLogin('kt5dFLArJzV7hCNMQ3ZvgqFokM62')}
-                  className="w-full p-3.5 rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-neutral-950 via-slate-900 to-neutral-950 text-white hover:border-amber-300 transition-all cursor-pointer shadow-md flex items-center justify-between gap-3 text-left group"
+                  onClick={() => setStep('register_form')}
+                  className="w-full py-3 px-4 rounded-xl border-2 border-[#FF6A00]/30 bg-orange-50/50 hover:bg-orange-50 text-[#FF6A00] font-black text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-amber-400 text-neutral-950 flex items-center justify-center font-black shrink-0 shadow-sm group-hover:scale-105 transition-transform">
-                      <ShieldCheck className="w-5 h-5 text-neutral-950" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-amber-400 text-xs">Acesso Direto: Administrador Master</span>
-                        <span className="text-[9px] bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5 py-0.2 rounded font-mono font-bold">
-                          kt5dFLArJzV7hCNMQ3ZvgqFokM62
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-neutral-400 mt-0.5 truncate">
-                        Entra automaticamente no Painel com todos os utilizadores, saldos e mercado
-                      </p>
-                    </div>
-                  </div>
-                  <div className="px-3 py-1.5 rounded-xl bg-amber-400 text-neutral-950 font-black text-xs shrink-0 flex items-center gap-1 shadow-sm group-hover:bg-amber-300">
-                    <span>Entrar Já</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </div>
+                  <UserPlus className="w-4 h-4" />
+                  <span>Criar Nova Conta Agora</span>
                 </button>
-              </div>
-
-              {/* Contas de Acesso Rápido para Testes */}
-              <div className="pt-3 border-t border-neutral-100 space-y-2">
-                <span className="text-[10px] uppercase font-bold text-neutral-400 block text-center">
-                  Outras Contas de Demonstração:
-                </span>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickLogin('domingos@baba.ao')}
-                    className="p-2.5 rounded-xl border border-neutral-200 bg-neutral-50 hover:bg-neutral-100 text-left transition-colors cursor-pointer"
-                  >
-                    <div className="font-bold text-neutral-900 truncate">Domingos Sebastião</div>
-                    <div className="text-[10px] text-neutral-500">Cliente • 500 Kz</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickLogin('antonio@baba.ao')}
-                    className="p-2.5 rounded-xl border border-neutral-200 bg-neutral-50 hover:bg-neutral-100 text-left transition-colors cursor-pointer"
-                  >
-                    <div className="font-bold text-neutral-900 truncate">António Kwanza</div>
-                    <div className="text-[10px] text-amber-600">Em Processamento</div>
-                  </button>
-                </div>
-              </div>
-
-              <div className="text-center pt-2">
                 <button
                   type="button"
                   onClick={() => setStep('presentation')}
-                  className="text-xs font-bold text-[#FF6A00] hover:text-orange-700 underline cursor-pointer"
+                  className="text-xs font-bold text-neutral-500 hover:text-neutral-800 underline cursor-pointer inline-block pt-1"
                 >
-                  ← Ver Apresentação e Criar Nova Conta
+                  ← Ver Apresentação da Plataforma
                 </button>
               </div>
             </form>

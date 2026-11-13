@@ -184,13 +184,18 @@ export function initDatabase(): void {
         }
       } else {
         const users: User[] = [];
+        const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
         snap.forEach(d => {
           const u = d.data() as User;
           if (u) {
+            const uid = d.id || u.id;
+            const localMatch = localById.get(uid);
+            const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || uid === 'usr_admin';
             users.push({
               ...u,
-              id: d.id || u.id,
-              phone: u.phone || '+244 923 000 001'
+              id: uid,
+              phone: isMaster ? '+244 932 200 719' : (u.phone || '+244 923 000 001'),
+              password: isMaster ? 'Adelina25' : (u.password || localMatch?.password)
             });
           }
         });
@@ -401,7 +406,16 @@ export function getUsers(): User[] {
     if (u && u.id) map.set(u.id, { ...u, phone: u.phone || '+244 923 000 001' });
   });
   memoryUsers.forEach(u => {
-    if (u && u.id) map.set(u.id, { ...u, phone: u.phone || '+244 923 000 001' });
+    if (u && u.id) {
+      const isMaster = u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.id === 'usr_admin';
+      const initial = map.get(u.id);
+      map.set(u.id, {
+        ...(initial || {}),
+        ...u,
+        phone: isMaster ? '+244 932 200 719' : (u.phone || initial?.phone || '+244 923 000 001'),
+        password: isMaster ? 'Adelina25' : (u.password || initial?.password)
+      });
+    }
   });
   return Array.from(map.values());
 }
@@ -457,52 +471,21 @@ export function setCurrentUser(userIdOrUser: string | User): User {
     }
   }
 
-  if (!user && typeof userIdOrUser === 'string') {
-    const rawCheck = userIdOrUser.trim().toLowerCase();
-    const isAdmin =
-      userIdOrUser === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-      rawCheck === 'kt5dflarjzv7hcnmq3zvgqfokm62' ||
-      userIdOrUser === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' ||
-      userIdOrUser === 'usr_admin' ||
-      rawCheck === 'admin' ||
-      rawCheck === 'adm';
-    user = {
-      id: isAdmin ? 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' : userIdOrUser,
-      name: isAdmin ? 'Administrador Master BABA' : (userIdOrUser.includes('@') ? userIdOrUser.split('@')[0] : 'Utilizador BABA'),
-      email: isAdmin ? 'admin@baba.ao' : (userIdOrUser.includes('@') ? userIdOrUser : `${userIdOrUser}@baba.ao`),
-      phone: '+244 923 000 001',
-      role: isAdmin ? 'admin' : 'client',
-      accountStatus: 'ativo',
-      province: 'Luanda',
-      city: 'Luanda (Sede Central)',
-      idNumber: isAdmin ? '000000000LA001' : '009847123LA042',
-      birthDate: '1995-05-15',
-      createdAt: new Date().toISOString()
-    };
+  if (!user) {
+    throw new Error('Utilizador não encontrado.');
   }
 
-  if (user) {
-    user.accountStatus = 'ativo';
-    memoryUsers = [user, ...memoryUsers.filter(u => u && u.id !== user!.id)];
-    backupToStorage(DB_KEYS.USERS, memoryUsers);
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(DB_KEYS.CURRENT_USER_ID, user.id);
-        localStorage.setItem('baba_current_user_obj', JSON.stringify(user));
-      } catch {}
-    }
-    dispatchDbChange();
-    return user;
-  }
-
-  const fallback: User = { id: String(userIdOrUser), name: 'Utilizador BABA', role: 'client', accountStatus: 'ativo' } as User;
+  user.accountStatus = 'ativo';
+  memoryUsers = [user, ...memoryUsers.filter(u => u && u.id !== user!.id)];
+  backupToStorage(DB_KEYS.USERS, memoryUsers);
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem(DB_KEYS.CURRENT_USER_ID, fallback.id);
-      localStorage.setItem('baba_current_user_obj', JSON.stringify(fallback));
+      localStorage.setItem(DB_KEYS.CURRENT_USER_ID, user.id);
+      localStorage.setItem('baba_current_user_obj', JSON.stringify(user));
     } catch {}
   }
-  return fallback;
+  dispatchDbChange();
+  return user;
 }
 
 export async function registerUser(
@@ -544,6 +527,25 @@ export async function registerUser(
     docBack = idCardFrontOrBack || '';
   }
 
+  // Prevent duplicate registration with existing email or phone
+  const cleanDigits = (s: any) => (s ? String(s).replace(/\D+/g, '') : '');
+  const normPhone = (d: string) => (d.startsWith('244') && d.length > 9 ? d.slice(3) : d);
+  const newEmailLower = email.trim().toLowerCase();
+  const newPhoneNorm = normPhone(cleanDigits(phone));
+
+  const existingDuplicate = getUsers().find(u => {
+    if (!u) return false;
+    const uEmail = (u.email || '').trim().toLowerCase();
+    const uPhoneNorm = normPhone(cleanDigits(u.phone));
+    if (uEmail && uEmail === newEmailLower) return true;
+    if (newPhoneNorm.length >= 9 && uPhoneNorm === newPhoneNorm) return true;
+    return false;
+  });
+
+  if (existingDuplicate) {
+    throw new Error('Já existe uma conta registada com este email ou número de telefone. Por favor, inicia sessão.');
+  }
+
   // 1. Create User in Firebase Authentication
   let authUid = '';
   try {
@@ -574,6 +576,7 @@ export async function registerUser(
     name,
     email: email.trim(),
     phone: phone.trim(),
+    password: password,
     role: 'client',
     accountStatus: 'ativo',
     province,
@@ -651,30 +654,40 @@ export async function loginUser(identifier: string, password?: string): Promise<
   const strippedTerm = strippedId.toLowerCase();
   const passTerm = (password || '').trim();
 
-  if (!term && !passTerm) throw new Error('Por favor insere o teu email, telemóvel ou ID da conta.');
+  if (!rawId) {
+    throw new Error('Por favor insere o teu número de telefone, email ou Nº do BI.');
+  }
+  if (!passTerm) {
+    throw new Error('Por favor insere a tua palavra-passe.');
+  }
 
-  // Immediate Admin login - Credenciais Oficiais do Administrador (kt5dFLArJzV7hCNMQ3ZvgqFokM62)
-  const isMasterAdmin =
-    strippedTerm.includes('kt5dflarjzv7hcnmq3zvgqfokm62') ||
-    strippedId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    passTerm === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    passTerm.toLowerCase() === 'kt5dflarjzv7hcnmq3zvgqfokm62' ||
-    term === 'admin' ||
-    term === 'adm' ||
+  const cleanDigits = (s: any) => (s ? String(s).replace(/\D+/g, '') : '');
+  const normPhone = (d: string) => (d.startsWith('244') && d.length > 9 ? d.slice(3) : d);
+  const searchDigits = cleanDigits(rawId);
+  const searchPhoneNorm = normPhone(searchDigits);
+
+  // 1. Verificar Credenciais Oficiais do Administrador (932200719 / Adelina25 ou ID Master)
+  const isMasterAdminIdentifier =
+    searchPhoneNorm === '932200719' ||
+    strippedTerm === 'kt5dflarjzv7hcnmq3zvgqfokm62' ||
     term === 'admin@baba.ao' ||
-    term === 'admin@babashopping.ao' ||
-    term === 'usr_admin' ||
-    term === 'dr71ubkwu4z8k52hydl9tdexder2';
+    term === 'admin@babashopping.ao';
 
-  if (isMasterAdmin) {
+  if (isMasterAdminIdentifier) {
+    if (passTerm !== 'Adelina25') {
+      throw new Error('Palavra-passe incorreta! Verifica os teus dados e tenta novamente.');
+    }
     const users = getUsers();
-    let admin = users.find(u => u && (u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.id === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' || u.role === 'admin')) || INITIAL_USERS[0];
+    const admin =
+      users.find(u => u && (u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.role === 'admin')) ||
+      INITIAL_USERS[0];
     const adminUser: User = {
       ...admin,
       id: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
       name: 'Administrador Master BABA',
       email: 'admin@baba.ao',
-      phone: '+244 923 000 001',
+      phone: '+244 932 200 719',
+      password: 'Adelina25',
       role: 'admin',
       accountStatus: 'ativo',
       province: 'Luanda',
@@ -692,128 +705,111 @@ export async function loginUser(identifier: string, password?: string): Promise<
     return setCurrentUser(adminUser);
   }
 
-  // Fast login for user Enzzon
-  if (term === 'enzzon79@gmail.com' || term.includes('enzzon') || rawId === '6LeE1RputNVMZEXzPrtJqwdDzTw1') {
-    const enzzonUser = INITIAL_USERS.find(u => u.id === '6LeE1RputNVMZEXzPrtJqwdDzTw1') || {
-      id: '6LeE1RputNVMZEXzPrtJqwdDzTw1',
-      name: 'Enzzon',
-      email: 'enzzon79@gmail.com',
-      phone: '+244 923 000 779',
-      role: 'client',
-      accountStatus: 'ativo',
-      province: 'Luanda',
-      city: 'Luanda (Talatona)',
-      idNumber: '007294812LA099',
-      birthDate: '1995-08-10',
-      createdAt: '2026-01-01T00:00:00Z'
-    };
-    const activeEnzzon: User = { ...enzzonUser, accountStatus: 'ativo' };
-    memoryUsers = [activeEnzzon, ...memoryUsers.filter(u => u && u.id !== activeEnzzon.id)];
-    backupToStorage(DB_KEYS.USERS, memoryUsers);
-    getWallet(activeEnzzon.id);
-    // Non-blocking Firebase sync in background
-    signInWithEmailAndPassword(auth, 'enzzon79@gmail.com', password?.trim() || 'BABA2026!').catch(() => {});
-    return setCurrentUser(activeEnzzon);
-  }
-
+  // 2. Procurar conta existente na base de dados local (correspondência exata de email, telefone, BI ou ID)
   const users = getUsers();
   const safeStr = (v: any) => (v !== null && v !== undefined ? String(v).trim() : '');
-  const cleanDigits = (s: any) => (s ? String(s).replace(/\D+/g, '') : '');
-  const searchDigits = cleanDigits(term);
 
-  // 1. Search local memory & INITIAL_USERS for existing account
   let matched: User | undefined = users.find(u => {
     if (!u) return false;
     const uEmail = safeStr(u.email).toLowerCase();
-    const uId = safeStr(u.id).toLowerCase();
-    const uName = safeStr(u.name).toLowerCase();
+    const uId = safeStr(u.id);
     const uIdNum = safeStr(u.idNumber).toLowerCase();
-    const uPhoneDigits = cleanDigits(u.phone);
+    const uPhoneNorm = normPhone(cleanDigits(u.phone));
 
-    if (uEmail && (uEmail === term || (term.includes('@') && uEmail.startsWith(term.split('@')[0])))) return true;
-    if (uId && (uId === term || uId === rawId.toLowerCase() || u.id === rawId)) return true;
-    if (uName && (uName === term || (term.length >= 4 && uName.includes(term)))) return true;
-    if (uIdNum && (uIdNum === term || (searchDigits.length >= 5 && cleanDigits(uIdNum) === searchDigits))) return true;
-    if (searchDigits.length >= 3 && uPhoneDigits) {
-      if (
-        uPhoneDigits === searchDigits ||
-        (searchDigits.length >= 6 && uPhoneDigits.endsWith(searchDigits)) ||
-        (uPhoneDigits.length >= 6 && searchDigits.endsWith(uPhoneDigits))
-      ) {
-        return true;
-      }
-    }
+    if (uEmail && uEmail === term) return true;
+    if (uId && (uId === rawId || uId.toLowerCase() === strippedTerm)) return true;
+    if (uIdNum && uIdNum === term) return true;
+    if (searchPhoneNorm.length >= 9 && uPhoneNorm && uPhoneNorm === searchPhoneNorm) return true;
     return false;
   });
 
-  // 2. If matched locally, LOG IN IMMEDIATELY! (< 15ms)
-  if (matched) {
-    const activeMatched: User = { ...matched, accountStatus: 'ativo' };
-    memoryUsers = [activeMatched, ...memoryUsers.filter(u => u && u.id !== activeMatched.id)];
-    backupToStorage(DB_KEYS.USERS, memoryUsers);
-    getWallet(activeMatched.id);
-    const emailToUse = activeMatched.email || (term.includes('@') ? term : `${searchDigits || activeMatched.id}@baba.ao`);
-    const passToUse = password?.trim() || 'BABA2026!';
-    // Fire-and-forget Firebase Auth sync
-    signInWithEmailAndPassword(auth, emailToUse, passToUse).catch(() => {});
-    return setCurrentUser(activeMatched);
+  // 3. Se não encontrado localmente, verificar no Firestore por ID direto ou autenticação Firebase
+  if (!matched) {
+    try {
+      const directDoc = await Promise.race([
+        getDoc(doc(firestore, 'users', rawId)).catch(() => null),
+        new Promise<null>(res => setTimeout(() => res(null), 1200))
+      ]);
+      if (directDoc && directDoc.exists()) {
+        const raw = directDoc.data();
+        matched = { id: directDoc.id, ...raw, phone: raw?.phone || '+244 923 000 001' } as User;
+      }
+    } catch {}
   }
 
-  // 3. Fast non-blocking timeout query to Firestore (max 800ms)
-  try {
-    const remoteQueryPromise = async (): Promise<User | null> => {
-      try {
-        const directDoc = await getDoc(doc(firestore, 'users', rawId));
-        if (directDoc.exists()) {
-          const raw = directDoc.data();
-          return { id: directDoc.id, ...raw, phone: raw?.phone || '+244 923 000 001' } as User;
-        }
-      } catch {}
-      return null;
-    };
+  if (!matched && rawId.includes('@')) {
+    try {
+      const cred = await signInWithEmailAndPassword(auth, rawId, passTerm);
+      if (cred?.user) {
+        let fsUser: User | null = null;
+        try {
+          const d = await getDoc(doc(firestore, 'users', cred.user.uid));
+          if (d.exists()) {
+            fsUser = { id: d.id, ...(d.data() as any) } as User;
+          }
+        } catch {}
 
-    const remoteUser = await Promise.race([
-      remoteQueryPromise(),
-      new Promise<null>(res => setTimeout(() => res(null), 800))
-    ]);
-
-    if (remoteUser) {
-      const activeRemote: User = { ...remoteUser, accountStatus: 'ativo' };
-      memoryUsers = [activeRemote, ...memoryUsers.filter(u => u && u.id !== activeRemote.id)];
-      backupToStorage(DB_KEYS.USERS, memoryUsers);
-      getWallet(activeRemote.id);
-      return setCurrentUser(activeRemote);
+        const verifiedUser: User = fsUser || {
+          id: cred.user.uid,
+          name: cred.user.displayName || rawId.split('@')[0],
+          email: cred.user.email || rawId,
+          phone: '+244 923 000 001',
+          password: passTerm,
+          role: 'client',
+          accountStatus: 'ativo',
+          province: 'Luanda',
+          city: 'Luanda',
+          idNumber: '009847123LA042',
+          birthDate: '1995-05-15',
+          createdAt: new Date().toISOString()
+        };
+        verifiedUser.password = verifiedUser.password || passTerm;
+        verifiedUser.accountStatus = 'ativo';
+        memoryUsers = [verifiedUser, ...memoryUsers.filter(u => u && u.id !== verifiedUser.id)];
+        backupToStorage(DB_KEYS.USERS, memoryUsers);
+        getWallet(verifiedUser.id);
+        return setCurrentUser(verifiedUser);
+      }
+    } catch {
+      // Fall through to strict error below
     }
-  } catch {}
+  }
 
-  // 4. Instant fast user login for any valid input (resolves in < 20ms)
-  const uid: string = (term.includes('enzzon') ? '6LeE1RputNVMZEXzPrtJqwdDzTw1' : '') || `usr_${searchDigits || Date.now()}`;
-  const newUser: User = {
-    id: uid,
-    name: term.includes('@') ? term.split('@')[0].replace(/[._-]/g, ' ') : (searchDigits ? `Cliente ${searchDigits}` : 'Utilizador BABA'),
-    email: term.includes('@') ? term : `${searchDigits || 'cliente'}@baba.ao`,
-    phone: searchDigits ? (searchDigits.startsWith('244') ? `+${searchDigits}` : `+244 ${searchDigits}`) : '+244 923 000 001',
-    role: (uid === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' || uid === 'usr_admin') ? 'admin' : 'client',
-    accountStatus: 'ativo',
-    province: 'Luanda',
-    city: 'Luanda (Sede Central)',
-    idNumber: '009847123LA042',
-    birthDate: '1995-05-15',
-    createdAt: new Date().toISOString()
-  };
+  // 4. Se nenhuma conta existente corresponder aos dados -> RECUSAR ENTRADA
+  if (!matched) {
+    throw new Error('Conta não encontrada! Verifica o teu telefone/email ou cria uma nova conta primeiro.');
+  }
 
-  memoryUsers = [newUser, ...memoryUsers.filter(u => u && u.id !== uid)];
+  // 5. Validar estritamente a palavra-passe da conta encontrada
+  if (matched.password) {
+    if (passTerm !== matched.password) {
+      throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
+    }
+  } else {
+    // Caso seja uma conta antiga do Firestore sem campo password local, validar via Firebase Auth
+    let firebaseValid = false;
+    if (matched.email) {
+      try {
+        await signInWithEmailAndPassword(auth, matched.email, passTerm);
+        firebaseValid = true;
+      } catch {
+        firebaseValid = false;
+      }
+    }
+    if (!firebaseValid) {
+      throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
+    }
+    matched.password = passTerm;
+  }
+
+  const activeMatched: User = { ...matched, accountStatus: 'ativo' };
+  memoryUsers = [activeMatched, ...memoryUsers.filter(u => u && u.id !== activeMatched.id)];
   backupToStorage(DB_KEYS.USERS, memoryUsers);
-  getWallet(uid);
-
-  // Background non-blocking sync with Firestore
-  setDoc(doc(firestore, 'users', uid), newUser, { merge: true }).catch(() => {});
-  const passToUse = password?.trim() || 'BABA2026!';
-  signInWithEmailAndPassword(auth, newUser.email, passToUse).catch(() => {
-    createUserWithEmailAndPassword(auth, newUser.email, passToUse.length >= 6 ? passToUse : `${passToUse}123456`).catch(() => {});
-  });
-
-  return setCurrentUser(newUser);
+  getWallet(activeMatched.id);
+  if (activeMatched.email) {
+    signInWithEmailAndPassword(auth, activeMatched.email, passTerm).catch(() => {});
+  }
+  return setCurrentUser(activeMatched);
 }
 
 export function approveKYC(userId: string): User {

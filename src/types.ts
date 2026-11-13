@@ -12,6 +12,7 @@ export interface User {
   idNumber: string;
   birthDate: string;
   accountStatus: AccountStatus;
+  password?: string;
   idCardFront?: string;
   idCardBack?: string;
   rejectionReason?: string;
