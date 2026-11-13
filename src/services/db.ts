@@ -440,7 +440,7 @@ export function getCurrentUser(): User | null {
       }
     } catch {}
   }
-  if (user) {
+  if (user && (user.role === 'admin' || user.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || user.id === 'usr_admin')) {
     user.accountStatus = 'ativo';
   }
   return user || null;
@@ -462,7 +462,7 @@ export async function logoutUser(): Promise<void> {
 export function setCurrentUser(userIdOrUser: string | User): User {
   let user: User | undefined;
   if (typeof userIdOrUser === 'object' && userIdOrUser !== null) {
-    user = { ...userIdOrUser, accountStatus: 'ativo' };
+    user = { ...userIdOrUser };
   } else {
     const users = getUsers();
     user = users.find(u => u && (u.id === userIdOrUser || u.id?.toLowerCase() === String(userIdOrUser).toLowerCase()));
@@ -475,7 +475,13 @@ export function setCurrentUser(userIdOrUser: string | User): User {
     throw new Error('Utilizador não encontrado.');
   }
 
-  user.accountStatus = 'ativo';
+  const isAdmin = user.role === 'admin' || user.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || user.id === 'usr_admin';
+  if (isAdmin) {
+    user.accountStatus = 'ativo';
+  } else {
+    user.accountStatus = user.accountStatus || 'em_processamento';
+  }
+
   memoryUsers = [user, ...memoryUsers.filter(u => u && u.id !== user!.id)];
   backupToStorage(DB_KEYS.USERS, memoryUsers);
   if (typeof window !== 'undefined') {
@@ -578,7 +584,7 @@ export async function registerUser(
     phone: phone.trim(),
     password: password,
     role: 'client',
-    accountStatus: 'ativo',
+    accountStatus: 'em_processamento',
     province,
     city,
     idNumber,
@@ -620,24 +626,27 @@ export async function registerUser(
   memoryTransactions = [welcomeTx, ...memoryTransactions];
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(DB_KEYS.CURRENT_USER_ID, userId);
+  // Não autenticar automaticamente — a conta fica pendente até o Administrador validar o BI e aceitar
+  try {
+    await signOut(auth);
+  } catch {
+    // safe ignore
   }
 
-  // Create welcome notification
+  // Create pending review notification
   createNotification(
     userId,
-    'Boas-vindas ao BABA SHOPPING! 🇧🇷',
-    'A tua conta foi criada com sucesso e guardada no Firebase com 500,00 Kz de bónus de boas-vindas na tua carteira digital.',
+    'Conta em Revisão pelo Administrador 📋',
+    'A tua conta foi criada e encontra-se em revisão. Assim que o Administrador validar os teus dados e o Bilhete de Identidade, poderás iniciar sessão e usar os 500,00 Kz de bónus.',
     'sistema',
     'carteira'
   );
 
   // 2. Direct AWAIT write to Cloud Firestore
   try {
-    await setDoc(doc(firestore, 'users', userId), newUser, { merge: true });
-    await setDoc(doc(firestore, 'wallets', userId), newWallet, { merge: true });
-    await setDoc(doc(firestore, 'transactions', welcomeTx.id), welcomeTx, { merge: true });
+    await setDoc(doc(firestore, 'users', userId), cleanForFirestore(newUser), { merge: true });
+    await setDoc(doc(firestore, 'wallets', userId), cleanForFirestore(newWallet), { merge: true });
+    await setDoc(doc(firestore, 'transactions', welcomeTx.id), cleanForFirestore(welcomeTx), { merge: true });
     console.log('User and wallet saved to Firestore successfully for UID:', userId);
   } catch (fsErr) {
     console.warn('Firestore write note:', fsErr);
@@ -737,6 +746,33 @@ export async function loginUser(identifier: string, password?: string): Promise<
     } catch {}
   }
 
+  const assertAccountApproved = async (u: User) => {
+    const isAdmin =
+      u.role === 'admin' ||
+      u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+      u.id === 'usr_admin';
+    if (isAdmin) return;
+
+    if (u.accountStatus === 'em_processamento') {
+      try {
+        await signOut(auth);
+      } catch {}
+      throw new Error(
+        'A sua conta encontra-se em revisão. Aguarda a validação do Bilhete de Identidade e aceitação pelo Administrador.'
+      );
+    }
+
+    if (u.accountStatus === 'rejeitado') {
+      try {
+        await signOut(auth);
+      } catch {}
+      const motivo =
+        (u.rejectionReason || '').trim() ||
+        'Documentação ou dados do Bilhete de Identidade não conformes.';
+      throw new Error(`A sua conta foi rejeitada por motivo: ${motivo}`);
+    }
+  };
+
   if (!matched && rawId.includes('@')) {
     try {
       const cred = await signInWithEmailAndPassword(auth, rawId, passTerm);
@@ -749,28 +785,23 @@ export async function loginUser(identifier: string, password?: string): Promise<
           }
         } catch {}
 
-        const verifiedUser: User = fsUser || {
-          id: cred.user.uid,
-          name: cred.user.displayName || rawId.split('@')[0],
-          email: cred.user.email || rawId,
-          phone: '+244 923 000 001',
-          password: passTerm,
-          role: 'client',
-          accountStatus: 'ativo',
-          province: 'Luanda',
-          city: 'Luanda',
-          idNumber: '009847123LA042',
-          birthDate: '1995-05-15',
-          createdAt: new Date().toISOString()
-        };
-        verifiedUser.password = verifiedUser.password || passTerm;
-        verifiedUser.accountStatus = 'ativo';
-        memoryUsers = [verifiedUser, ...memoryUsers.filter(u => u && u.id !== verifiedUser.id)];
-        backupToStorage(DB_KEYS.USERS, memoryUsers);
-        getWallet(verifiedUser.id);
-        return setCurrentUser(verifiedUser);
+        if (fsUser) {
+          fsUser.password = fsUser.password || passTerm;
+          await assertAccountApproved(fsUser);
+          memoryUsers = [fsUser, ...memoryUsers.filter(u => u && u.id !== fsUser!.id)];
+          backupToStorage(DB_KEYS.USERS, memoryUsers);
+          getWallet(fsUser.id);
+          return setCurrentUser(fsUser);
+        }
       }
-    } catch {
+    } catch (authOrStatusErr: any) {
+      if (
+        authOrStatusErr?.message &&
+        (authOrStatusErr.message.includes('encontra-se em revisão') ||
+          authOrStatusErr.message.includes('foi rejeitada por motivo'))
+      ) {
+        throw authOrStatusErr;
+      }
       // Fall through to strict error below
     }
   }
@@ -802,7 +833,10 @@ export async function loginUser(identifier: string, password?: string): Promise<
     matched.password = passTerm;
   }
 
-  const activeMatched: User = { ...matched, accountStatus: 'ativo' };
+  // 6. Bloquear entrada se a conta ainda estiver em revisão ou tiver sido rejeitada pelo Administrador
+  await assertAccountApproved(matched);
+
+  const activeMatched: User = { ...matched };
   memoryUsers = [activeMatched, ...memoryUsers.filter(u => u && u.id !== activeMatched.id)];
   backupToStorage(DB_KEYS.USERS, memoryUsers);
   getWallet(activeMatched.id);
@@ -813,21 +847,32 @@ export async function loginUser(identifier: string, password?: string): Promise<
 }
 
 export function approveKYC(userId: string): User {
-  const idx = memoryUsers.findIndex(u => u.id === userId);
-  if (idx === -1) throw new Error('Utilizador não encontrado');
-  const updated: User = { ...memoryUsers[idx], accountStatus: 'ativo' };
-  memoryUsers[idx] = updated;
+  const idx = memoryUsers.findIndex(u => u && u.id === userId);
+  const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
+  if (!baseUser) throw new Error('Utilizador não encontrado');
+
+  const updated: User = {
+    ...baseUser,
+    accountStatus: 'ativo',
+    rejectionReason: '',
+    verifiedAt: new Date().toISOString()
+  };
+  if (idx !== -1) {
+    memoryUsers[idx] = updated;
+  } else {
+    memoryUsers = [updated, ...memoryUsers];
+  }
   backupToStorage(DB_KEYS.USERS, memoryUsers);
 
   createNotification(
     userId,
-    'Identidade Verificada com Sucesso! 🇧🇷',
+    'Identidade Verificada com Sucesso! 🇦🇴',
     'O teu documento foi aprovado pelo Administrador. A tua conta está 100% ativa para compras e vendas.',
     'sistema'
   );
 
   dispatchDbChange();
-  updateDoc(doc(firestore, 'users', userId), { accountStatus: 'ativo' }).catch(err =>
+  setDoc(doc(firestore, 'users', userId), cleanForFirestore(updated), { merge: true }).catch(err =>
     console.warn('Firestore KYC approve note:', err)
   );
 
@@ -835,21 +880,32 @@ export function approveKYC(userId: string): User {
 }
 
 export function rejectKYC(userId: string, reason: string): User {
-  const idx = memoryUsers.findIndex(u => u.id === userId);
-  if (idx === -1) throw new Error('Utilizador não encontrado');
-  const updated: User = { ...memoryUsers[idx], accountStatus: 'rejeitado' };
-  memoryUsers[idx] = updated;
+  const idx = memoryUsers.findIndex(u => u && u.id === userId);
+  const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
+  if (!baseUser) throw new Error('Utilizador não encontrado');
+
+  const cleanReason = (reason || '').trim() || 'Documentação ou dados do Bilhete de Identidade não conformes.';
+  const updated: User = {
+    ...baseUser,
+    accountStatus: 'rejeitado',
+    rejectionReason: cleanReason
+  };
+  if (idx !== -1) {
+    memoryUsers[idx] = updated;
+  } else {
+    memoryUsers = [updated, ...memoryUsers];
+  }
   backupToStorage(DB_KEYS.USERS, memoryUsers);
 
   createNotification(
     userId,
     'Documento Rejeitado pelo Administrador',
-    `Motivo da recusa: ${reason}. Por favor anexa uma fotografia legível do documento.`,
+    `Motivo da recusa: ${cleanReason}. Por favor anexa uma fotografia legível do documento.`,
     'sistema'
   );
 
   dispatchDbChange();
-  updateDoc(doc(firestore, 'users', userId), { accountStatus: 'rejeitado' }).catch(err =>
+  setDoc(doc(firestore, 'users', userId), cleanForFirestore(updated), { merge: true }).catch(err =>
     console.warn('Firestore KYC reject note:', err)
   );
 
@@ -861,23 +917,28 @@ export function resubmitKYCDocuments(
   idCardFront: string,
   idCardBack: string
 ): User {
-  const idx = memoryUsers.findIndex(u => u.id === userId);
-  if (idx === -1) throw new Error('Utilizador não encontrado');
+  const idx = memoryUsers.findIndex(u => u && u.id === userId);
+  const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
+  if (!baseUser) throw new Error('Utilizador não encontrado');
+
   const updated: User = {
-    ...memoryUsers[idx],
+    ...baseUser,
     idCardFront,
     idCardBack,
+    rejectionReason: '',
     accountStatus: 'em_processamento'
   };
-  memoryUsers[idx] = updated;
+  if (idx !== -1) {
+    memoryUsers[idx] = updated;
+  } else {
+    memoryUsers = [updated, ...memoryUsers];
+  }
   backupToStorage(DB_KEYS.USERS, memoryUsers);
 
   dispatchDbChange();
-  updateDoc(doc(firestore, 'users', userId), {
-    idCardFront,
-    idCardBack,
-    accountStatus: 'em_processamento'
-  }).catch(err => console.warn('Firestore resubmit note:', err));
+  setDoc(doc(firestore, 'users', userId), cleanForFirestore(updated), { merge: true }).catch(err =>
+    console.warn('Firestore resubmit note:', err)
+  );
 
   return updated;
 }

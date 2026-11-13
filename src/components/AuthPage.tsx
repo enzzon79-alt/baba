@@ -74,11 +74,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   // 2. 'register_form' (Preencher nome completo, Gmail, número de telefone e selecionar a província)
   // 3. 'processing_data' (Processamento dos dados)
   // 4. 'identity_verification' (Abrir página de verificação de identidade e carregar fotografia frente e verso)
-  // 5. 'waiting_approval' (Aguardar aprovação)
-  // 6. 'approved' (Aprovado com botão "Entrar na plataforma")
-  // 7. 'login' (Acesso para utilizadores já registados)
+  // 5. 'waiting_approval' (Conta pendente — aguarda validação do BI e aceitação pelo Administrador)
+  // 6. 'login' (Acesso para utilizadores já aprovados ou Administrador)
   const [step, setStep] = useState<
-    'presentation' | 'register_form' | 'processing_data' | 'identity_verification' | 'waiting_approval' | 'approved' | 'login'
+    'presentation' | 'register_form' | 'processing_data' | 'identity_verification' | 'waiting_approval' | 'login'
   >(initialMode === 'login' ? 'login' : 'presentation');
 
   // Form State - Dados Cadastrais
@@ -225,35 +224,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         back
       );
 
-      // Marca o estado como pendente de aprovação
+      // Marca o estado como pendente de aprovação até o Administrador validar e aceitar
       newUser.accountStatus = 'em_processamento';
       setRegisteredUser(newUser);
 
-      // Avança para: Aguardar aprovação
+      // Avança para: Aguardar aprovação pelo Administrador
       setStep('waiting_approval');
     } catch (err: any) {
       setBiError(err.message || 'Erro ao submeter os documentos para verificação.');
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  // 3. Simular Aprovação do Administrador -> Entrar na plataforma
-  const handleApproveAccount = () => {
-    if (registeredUser) {
-      registeredUser.accountStatus = 'ativo';
-      setRegisteredUser({ ...registeredUser, accountStatus: 'ativo' });
-    }
-    setStep('approved');
-  };
-
-  // 4. Entrar na plataforma final após criação da conta
-  const handleEnterPlatform = () => {
-    if (registeredUser) {
-      registeredUser.accountStatus = 'ativo';
-      onLoginSuccess(registeredUser);
-    } else {
-      setStep('login');
     }
   };
 
@@ -934,74 +914,39 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 </div>
               </div>
 
-              {/* Ação: Simular Aprovação do Administrador */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/5 border-2 border-emerald-300 space-y-3">
-                <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs">
-                  <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                  <span>Área de Validação Rápida:</span>
+              {/* Aviso de Revisão Obrigatória pelo Administrador */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-300 space-y-3">
+                <div className="flex items-center gap-2 text-amber-900 font-black text-xs sm:text-sm">
+                  <ShieldCheck className="w-5 h-5 text-amber-700 shrink-0" />
+                  <span>A sua conta encontra-se em revisão</span>
                 </div>
-                <p className="text-xs text-neutral-600 leading-relaxed">
-                  Para fins de teste e verificação imediata, podes aprovar o teu Bilhete de Identidade agora mesmo sem ter de aguardar a moderação externa:
+                <p className="text-xs text-amber-900/90 leading-relaxed">
+                  Os teus dados pessoais e as fotografias do Bilhete de Identidade (<strong>{regIdNumber}</strong>) foram enviados para análise do Administrador.
+                  Enquanto o Administrador não validar o teu bilhete e aceitar a conta, não será possível entrar na plataforma.
                 </p>
-                <button
-                  type="button"
-                  onClick={handleApproveAccount}
-                  className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-                >
-                  <CheckCircle2 className="w-5 h-5" />
-                  <span>⚡ Aprovar Conta Imediatamente (Simulação Admin)</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginIdentifier(regPhone.trim() || regEmail.trim());
+                      setLoginPassword('');
+                      setLoginError(null);
+                      setStep('login');
+                    }}
+                    className="flex-1 py-3 px-4 bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white font-black text-xs sm:text-sm rounded-xl shadow-md shadow-orange-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span>Ir para Iniciar Sessão (Login)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStep('presentation')}
+                    className="py-3 px-4 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-bold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>Voltar ao Início</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* PASSO 6: ENTRAR NA PLATAFORMA (APROVADO COM SUCESSO) */}
-        {/* ======================================================== */}
-        {step === 'approved' && (
-          <div className="bg-white rounded-3xl shadow-xl border border-neutral-200 p-8 sm:p-10 text-center space-y-6 animate-fadeIn">
-            {/* Ícone de Sucesso */}
-            <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 border-4 border-emerald-200 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20">
-              <CheckCircle2 className="w-12 h-12 stroke-[2.5]" />
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-xs font-black uppercase tracking-wider text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full">
-                ✓ APROVADO PELO ADMINISTRADOR
-              </span>
-              <h2 className="text-2xl sm:text-3xl font-black text-neutral-900 tracking-tight">
-                Parabéns! Conta Aprovada com Sucesso!
-              </h2>
-              <p className="text-xs sm:text-sm text-neutral-600 max-w-md mx-auto leading-relaxed">
-                O teu Bilhete de Identidade (<strong>{regIdNumber}</strong>) foi formalmente verificado e regularizado na República de Angola.
-              </p>
-            </div>
-
-            {/* Bónus de 500 Kz Creditado */}
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 max-w-md mx-auto space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">
-                Saldo Inicial de Boas-Vindas
-              </span>
-              <div className="text-3xl font-black text-[#FF6A00] tabular-nums">
-                500,00 Kz
-              </div>
-              <p className="text-[11px] text-neutral-500">
-                Já creditado e pronto a utilizar na tua Carteira Digital BABA SHOPPING!
-              </p>
-            </div>
-
-            {/* Botão Entrar na Plataforma */}
-            <div className="pt-2 max-w-md mx-auto">
-              <button
-                type="button"
-                onClick={handleEnterPlatform}
-                className="w-full py-4 px-6 bg-gradient-to-r from-[#FF6A00] via-[#FF5000] to-[#E03A00] hover:from-[#FF5000] hover:to-[#C03000] text-white font-black text-base sm:text-lg rounded-2xl shadow-xl shadow-orange-500/30 transition-all flex items-center justify-center gap-3 cursor-pointer active:scale-98"
-              >
-                <span>Entrar na Plataforma</span>
-                <ArrowRight className="w-6 h-6" />
-              </button>
             </div>
           </div>
         )}
