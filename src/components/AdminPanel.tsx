@@ -46,12 +46,16 @@ import {
   UserPlus,
   Layers,
   MessageCircle,
-  Sparkle
+  Sparkle,
+  Trash2
 } from 'lucide-react';
 import {
   getUsers,
   approveKYC,
   rejectKYC,
+  suspendUser,
+  reactivateUser,
+  deleteUserAccount,
   getDeposits,
   approveDeposit,
   getWithdrawals,
@@ -156,7 +160,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Members Directory & Balance Management State
   const [memberSearch, setMemberSearch] = useState('');
-  const [memberStatusFilter, setMemberStatusFilter] = useState<'all' | 'ativo' | 'em_processamento' | 'rejeitado'>('all');
+  const [memberStatusFilter, setMemberStatusFilter] = useState<'all' | 'ativo' | 'em_processamento' | 'rejeitado' | 'suspenso'>('all');
   const [memberProvinceFilter, setMemberProvinceFilter] = useState('all');
   const [memberSortBy, setMemberSortBy] = useState<'number_asc' | 'number_desc' | 'balance_desc' | 'balance_asc' | 'name_asc'>('number_asc');
 
@@ -168,7 +172,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isAdjusting, setIsAdjusting] = useState(false);
 
   // Filters & Search for other tabs
-  const [kycFilter, setKycFilter] = useState<'em_processamento' | 'ativo' | 'rejeitado' | 'all'>('em_processamento');
+  const [kycFilter, setKycFilter] = useState<'em_processamento' | 'ativo' | 'rejeitado' | 'suspenso' | 'all'>('em_processamento');
   const [kycSearch, setKycSearch] = useState('');
 
   const [depositFilter, setDepositFilter] = useState<'all' | 'pendente' | 'aprovado' | 'rejeitado'>('pendente');
@@ -185,6 +189,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Reject KYC Modal
   const [rejectingUser, setRejectingUser] = useState<User | null>(null);
   const [rejectionReason, setRejectionReason] = useState('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
+
+  // Suspend / Delete User Modals
+  const [suspendingUser, setSuspendingUser] = useState<User | null>(null);
+  const [suspensionReason, setSuspensionReason] = useState('Conta suspensa temporariamente pelo Administrador para verificação de segurança.');
+  const [deletingUser, setDeletingUser] = useState<User | null>(null);
 
   // Receipt Zoom Modal
   const [zoomedReceipt, setZoomedReceipt] = useState<{ title: string; src: string; deposit: DepositRequest } | null>(null);
@@ -597,15 +606,44 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleToggleMemberStatus = (u: User) => {
     try {
       if (u.accountStatus === 'ativo') {
-        rejectKYC(u.id, 'Conta suspensa temporariamente pelo Administrador para verificação de segurança.');
-        showAlert(`A conta de ${u.name} foi suspensa com sucesso.`, 'success');
+        setSuspendingUser(u);
+        setSuspensionReason('Conta suspensa temporariamente pelo Administrador para verificação de segurança.');
+      } else if (u.accountStatus === 'suspenso') {
+        reactivateUser(u.id);
+        showAlert(`A conta de ${u.name} foi reativada com sucesso!`, 'success');
+        refreshData();
       } else {
         approveKYC(u.id);
         showAlert(`A conta de ${u.name} foi aprovada e ativada com sucesso!`, 'success');
+        refreshData();
       }
-      refreshData();
     } catch (err: any) {
       showAlert(err.message || 'Erro ao alterar estado do membro.', 'error');
+    }
+  };
+
+  const handleConfirmSuspendUser = () => {
+    if (!suspendingUser) return;
+    try {
+      suspendUser(suspendingUser.id, suspensionReason);
+      showAlert(`A conta de ${suspendingUser.name} foi suspensa com sucesso.`, 'error');
+      setSuspendingUser(null);
+      refreshData();
+    } catch (err: any) {
+      showAlert(err.message || 'Erro ao suspender utilizador.', 'error');
+    }
+  };
+
+  const handleConfirmDeleteUser = () => {
+    if (!deletingUser) return;
+    try {
+      const deletedName = deletingUser.name;
+      deleteUserAccount(deletingUser.id);
+      setDeletingUser(null);
+      showAlert(`A conta de ${deletedName} foi eliminada permanentemente.`, 'error');
+      refreshData();
+    } catch (err: any) {
+      showAlert(err.message || 'Erro ao eliminar conta do utilizador.', 'error');
     }
   };
 
@@ -1211,7 +1249,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <option value="all">Todos os Estados de Conta</option>
                   <option value="ativo">Contas Ativas & Regulares</option>
                   <option value="em_processamento">Validação de BI Pendente</option>
-                  <option value="rejeitado">Contas Suspensas</option>
+                  <option value="suspenso">Contas Suspensas</option>
+                  <option value="rejeitado">BI Rejeitado</option>
                 </select>
               </div>
 
@@ -1341,6 +1380,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                                 : u.accountStatus === 'em_processamento'
                                 ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                : u.accountStatus === 'suspenso'
+                                ? 'bg-orange-100 text-orange-800 border border-orange-200'
                                 : 'bg-red-100 text-red-800 border border-red-200'
                             }`}
                           >
@@ -1350,6 +1391,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   ? 'bg-emerald-600'
                                   : u.accountStatus === 'em_processamento'
                                   ? 'bg-amber-600'
+                                  : u.accountStatus === 'suspenso'
+                                  ? 'bg-orange-600'
                                   : 'bg-red-600'
                               }`}
                             />
@@ -1357,7 +1400,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               ? 'Conta Ativa'
                               : u.accountStatus === 'em_processamento'
                               ? 'BI Pendente'
-                              : 'Suspenso'}
+                              : u.accountStatus === 'suspenso'
+                              ? 'Suspenso'
+                              : 'BI Rejeitado'}
                           </span>
                         </div>
 
@@ -1446,19 +1491,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </button>
                         </div>
 
-                        {/* Additional toggle for non-master admins */}
+                        {/* Suspend / Reactivate & Delete account actions for non-master admins */}
                         {!isMasterAdmin && (
-                          <div className="flex items-center justify-end pt-1">
+                          <div className="flex items-center justify-end gap-2 pt-1">
                             <button
                               type="button"
                               onClick={() => handleToggleMemberStatus(u)}
-                              className={`text-[11px] font-bold px-3 py-1 rounded-lg border transition-colors cursor-pointer ${
+                              className={`text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-colors cursor-pointer flex items-center gap-1 ${
                                 u.accountStatus === 'ativo'
-                                  ? 'border-neutral-300 text-neutral-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300'
+                                  ? 'border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100'
                                   : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
                               }`}
                             >
-                              {u.accountStatus === 'ativo' ? 'Suspender Conta' : 'Ativar Conta'}
+                              <Ban className="w-3 h-3" />
+                              <span>
+                                {u.accountStatus === 'ativo'
+                                  ? 'Suspender Usuário'
+                                  : u.accountStatus === 'suspenso'
+                                  ? 'Reativar Usuário'
+                                  : 'Ativar Conta'}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeletingUser(u)}
+                              className="text-[11px] font-bold px-3 py-1.5 rounded-lg border border-red-300 text-red-700 bg-red-50 hover:bg-red-100 transition-colors cursor-pointer flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Eliminar Conta</span>
                             </button>
                           </div>
                         )}
@@ -1574,6 +1634,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                                     : u.accountStatus === 'em_processamento'
                                     ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    : u.accountStatus === 'suspenso'
+                                    ? 'bg-orange-100 text-orange-800 border border-orange-200'
                                     : 'bg-red-100 text-red-800 border border-red-200'
                                 }`}
                               >
@@ -1583,6 +1645,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                       ? 'bg-emerald-600'
                                       : u.accountStatus === 'em_processamento'
                                       ? 'bg-amber-600'
+                                      : u.accountStatus === 'suspenso'
+                                      ? 'bg-orange-600'
                                       : 'bg-red-600'
                                   }`}
                                 />
@@ -1590,7 +1654,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   ? 'Ativo'
                                   : u.accountStatus === 'em_processamento'
                                   ? 'Pendente'
-                                  : 'Suspenso'}
+                                  : u.accountStatus === 'suspenso'
+                                  ? 'Suspenso'
+                                  : 'Rejeitado'}
                               </span>
                             </td>
 
@@ -1606,14 +1672,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               </div>
                             </td>
 
-                            {/* Dedicated Add / Remove Balance Buttons */}
+                            {/* Dedicated Add / Remove Balance & Suspend / Delete Account Buttons */}
                             <td className="py-4 px-4 text-center align-middle">
-                              <div className="flex items-center justify-center gap-2">
+                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                 {/* Green Add Balance Button */}
                                 <button
                                   type="button"
                                   onClick={() => handleOpenBalanceModal(u, 'add')}
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] rounded-xl flex items-center gap-1 shadow-sm transition-all hover:scale-102 active:scale-95 cursor-pointer"
+                                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] rounded-xl flex items-center gap-1 shadow-sm transition-all hover:scale-102 active:scale-95 cursor-pointer"
                                   title="Adicionar Saldo (Crédito em Kwanzas)"
                                 >
                                   <Plus className="w-3.5 h-3.5 text-white stroke-[3]" />
@@ -1624,31 +1690,51 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleOpenBalanceModal(u, 'remove')}
-                                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-xl flex items-center gap-1 shadow-sm transition-all hover:scale-102 active:scale-95 cursor-pointer"
+                                  className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-xl flex items-center gap-1 shadow-sm transition-all hover:scale-102 active:scale-95 cursor-pointer"
                                   title="Remover Saldo (Débito em Kwanzas)"
                                 >
                                   <Minus className="w-3.5 h-3.5 text-white stroke-[3]" />
                                   <span>- Remover</span>
                                 </button>
 
-                                {/* Suspend / Activate toggle */}
+                                {/* Suspend / Activate & Delete Account buttons */}
                                 {!isMasterAdmin && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleToggleMemberStatus(u)}
-                                    className={`px-2 py-1.5 rounded-xl text-[10px] font-bold border transition-colors cursor-pointer ${
-                                      u.accountStatus === 'ativo'
-                                        ? 'border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50'
-                                        : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                                    }`}
-                                    title={
-                                      u.accountStatus === 'ativo'
-                                        ? 'Suspender temporariamente a conta deste membro'
-                                        : 'Aprovar e ativar conta do membro'
-                                    }
-                                  >
-                                    {u.accountStatus === 'ativo' ? 'Suspender' : 'Ativar'}
-                                  </button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleMemberStatus(u)}
+                                      className={`px-2.5 py-1.5 rounded-xl text-[10px] font-bold border transition-colors cursor-pointer flex items-center gap-1 ${
+                                        u.accountStatus === 'ativo'
+                                          ? 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100'
+                                          : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                      }`}
+                                      title={
+                                        u.accountStatus === 'ativo'
+                                          ? 'Suspender temporariamente a conta deste usuário'
+                                          : u.accountStatus === 'suspenso'
+                                          ? 'Reativar conta suspensa'
+                                          : 'Aprovar e ativar conta do membro'
+                                      }
+                                    >
+                                      <Ban className="w-3 h-3" />
+                                      <span>
+                                        {u.accountStatus === 'ativo'
+                                          ? 'Suspender'
+                                          : u.accountStatus === 'suspenso'
+                                          ? 'Reativar'
+                                          : 'Ativar'}
+                                      </span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeletingUser(u)}
+                                      className="px-2.5 py-1.5 rounded-xl text-[10px] font-bold border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-colors cursor-pointer flex items-center gap-1"
+                                      title="Eliminar conta deste utilizador permanentemente"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span>Eliminar</span>
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -2400,6 +2486,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
                 <button
                   type="button"
+                  onClick={() => setKycFilter('suspenso')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                    kycFilter === 'suspenso'
+                      ? 'bg-white text-neutral-900 shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900'
+                  }`}
+                >
+                  Suspensos ({users.filter(u => u.accountStatus === 'suspenso').length})
+                </button>
+                <button
+                  type="button"
                   onClick={() => setKycFilter('all')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
                     kycFilter === 'all'
@@ -2443,6 +2540,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 const isPending = u.accountStatus === 'em_processamento';
                 const isApproved = u.accountStatus === 'ativo';
                 const isRejected = u.accountStatus === 'rejeitado';
+                const isSuspended = u.accountStatus === 'suspenso';
+                const isMasterAdmin = u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.role === 'admin';
 
                 return (
                   <div
@@ -2497,6 +2596,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <span className="px-3 py-1 rounded-full bg-red-100 text-red-800 text-xs font-black border border-red-300 flex items-center gap-1.5">
                             <XCircle className="w-3.5 h-3.5" />
                             <span>Rejeitado</span>
+                          </span>
+                        )}
+                        {isSuspended && (
+                          <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-xs font-black border border-orange-300 flex items-center gap-1.5">
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Conta Suspensa</span>
                           </span>
                         )}
                       </div>
@@ -2621,44 +2726,79 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
 
                     {/* Action Buttons for Admin */}
-                    <div className="pt-2 flex flex-col sm:flex-row items-center justify-end gap-3 border-t border-neutral-100">
-                      {isPending ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRejectingUser(u);
-                              setRejectionReason('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
-                            }}
-                            className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            <span>Rejeitar Cadastro</span>
-                          </button>
+                    <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-neutral-100">
+                      <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                        {!isMasterAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleMemberStatus(u)}
+                              className={`px-3.5 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                u.accountStatus === 'ativo'
+                                  ? 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100'
+                                  : 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              }`}
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              <span>
+                                {u.accountStatus === 'ativo'
+                                  ? 'Suspender Usuário'
+                                  : isSuspended
+                                  ? 'Reativar Conta'
+                                  : 'Ativar Conta'}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeletingUser(u)}
+                              className="px-3.5 py-2 rounded-xl border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Eliminar Conta</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto justify-end">
+                        {isPending ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectingUser(u);
+                                setRejectionReason('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
+                              }}
+                              className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <XCircle className="w-4 h-4" />
+                              <span>Rejeitar Cadastro</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveKYC(u)}
+                              className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all cursor-pointer shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 active:scale-95"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Aprovar Cadastro Imediatamente</span>
+                            </button>
+                          </>
+                        ) : isRejected || isSuspended ? (
                           <button
                             type="button"
                             onClick={() => handleApproveKYC(u)}
-                            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition-all cursor-pointer shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 active:scale-95"
+                            className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-400 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                           >
                             <CheckCircle2 className="w-4 h-4" />
-                            <span>Aprovar Cadastro Imediatamente</span>
+                            <span>Reverter e Aprovar Cadastro</span>
                           </button>
-                        </>
-                      ) : isRejected ? (
-                        <button
-                          type="button"
-                          onClick={() => handleApproveKYC(u)}
-                          className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-400 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Reverter e Aprovar Cadastro</span>
-                        </button>
-                      ) : (
-                        <div className="text-xs text-emerald-700 font-bold flex items-center gap-1.5">
-                          <Check className="w-4 h-4" />
-                          <span>Cadastro Validado e Regularizado em Angola</span>
-                        </div>
-                      )}
+                        ) : (
+                          <div className="text-xs text-emerald-700 font-bold flex items-center gap-1.5">
+                            <Check className="w-4 h-4" />
+                            <span>Cadastro Validado e Regularizado em Angola</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -3682,6 +3822,127 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-black rounded-xl cursor-pointer shadow-md shadow-red-600/20"
               >
                 Confirmar Rejeição
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: SUSPENDER CONTA DE UTILIZADOR */}
+      {/* ======================================================== */}
+      {suspendingUser && (
+        <div
+          onClick={() => setSuspendingUser(null)}
+          className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 space-y-4 animate-scaleUp"
+          >
+            <div className="flex items-center gap-3 text-orange-600">
+              <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
+                <Ban className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-neutral-900">
+                  Suspender Usuário
+                </h3>
+                <span className="text-[11px] text-neutral-500">
+                  Bloquear acesso temporariamente na plataforma
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Vais suspender a conta de <strong>{suspendingUser.name}</strong> ({suspendingUser.phone}). Enquanto estiver suspensa, não poderá iniciar sessão nem operar no mercado.
+            </p>
+
+            <div>
+              <label className="text-xs font-bold text-neutral-800 block mb-1">
+                Motivo da Suspensão:
+              </label>
+              <textarea
+                value={suspensionReason}
+                onChange={e => setSuspensionReason(e.target.value)}
+                rows={3}
+                className="w-full p-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSuspendingUser(null)}
+                className="px-4 py-2 border border-neutral-300 text-neutral-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-neutral-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSuspendUser}
+                className="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-xl cursor-pointer shadow-md shadow-orange-600/20 flex items-center gap-1.5"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                <span>Confirmar Suspensão</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: ELIMINAR CONTA DE UTILIZADOR */}
+      {/* ======================================================== */}
+      {deletingUser && (
+        <div
+          onClick={() => setDeletingUser(null)}
+          className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 space-y-4 animate-scaleUp"
+          >
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-neutral-900">
+                  Eliminar Conta do Utilizador
+                </h3>
+                <span className="text-[11px] text-red-600 font-bold">
+                  Ação permanente e irreversível
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-900 space-y-1">
+              <div><strong>Nome:</strong> {deletingUser.name}</div>
+              <div><strong>Email:</strong> {deletingUser.email}</div>
+              <div><strong>Telefone:</strong> {deletingUser.phone}</div>
+              <div><strong>Nº do BI:</strong> {deletingUser.idNumber}</div>
+            </div>
+
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Tens a certeza de que desejas eliminar permanentemente a conta de <strong>{deletingUser.name}</strong>? Todos os anúncios ativos e o acesso desta conta serão removidos da plataforma.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingUser(null)}
+                className="px-4 py-2 border border-neutral-300 text-neutral-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-neutral-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteUser}
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-black rounded-xl cursor-pointer shadow-md shadow-red-600/25 flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Eliminar Conta Permanentemente</span>
               </button>
             </div>
           </div>

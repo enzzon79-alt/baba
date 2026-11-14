@@ -51,6 +51,7 @@ import {
 
 export const DB_KEYS = {
   USERS: 'baba_users_v9',
+  DELETED_USERS: 'baba_deleted_users_v9',
   CURRENT_USER_ID: 'baba_current_user_id_v9',
   PRODUCTS: 'baba_products_v9',
   USER_PRODUCTS: 'baba_user_products_v9',
@@ -74,6 +75,7 @@ export function dispatchDbChange(): void {
 // In-memory state for 0ms instantaneous React UI updates
 let memoryProducts: Product[] = [];
 let memoryUsers: User[] = [];
+let memoryDeletedUserIds: string[] = [];
 let memoryWallets: Record<string, Wallet> = {};
 let memoryTransactions: Transaction[] = [];
 let memoryUserProducts: UserProduct[] = [];
@@ -120,7 +122,10 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 
 // Initial hydration from backup storage for 0ms initial render
 memoryProducts = loadFromStorage(DB_KEYS.PRODUCTS, INITIAL_PRODUCTS);
-memoryUsers = loadFromStorage(DB_KEYS.USERS, INITIAL_USERS);
+memoryDeletedUserIds = loadFromStorage(DB_KEYS.DELETED_USERS, []);
+memoryUsers = loadFromStorage(DB_KEYS.USERS, INITIAL_USERS).filter(
+  (u: User) => u && !memoryDeletedUserIds.includes(u.id)
+);
 memoryWallets = loadFromStorage(DB_KEYS.WALLETS, INITIAL_WALLETS);
 memoryTransactions = loadFromStorage(DB_KEYS.TRANSACTIONS, INITIAL_TRANSACTIONS);
 memoryUserProducts = loadFromStorage(DB_KEYS.USER_PRODUCTS, []);
@@ -189,8 +194,9 @@ export function initDatabase(): void {
           const u = d.data() as User;
           if (u) {
             const uid = d.id || u.id;
-            const localMatch = localById.get(uid);
             const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || uid === 'usr_admin';
+            if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
+            const localMatch = localById.get(uid);
             users.push({
               ...u,
               id: uid,
@@ -402,11 +408,18 @@ export function createProduct(productData: Omit<Product, 'id'>): Product {
 // ==========================================
 export function getUsers(): User[] {
   const map = new Map<string, User>();
+  const isDeleted = (id: string) =>
+    id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
+    id !== 'usr_admin' &&
+    memoryDeletedUserIds.includes(id);
+
   INITIAL_USERS.forEach(u => {
-    if (u && u.id) map.set(u.id, { ...u, phone: u.phone || '+244 923 000 001' });
+    if (u && u.id && !isDeleted(u.id)) {
+      map.set(u.id, { ...u, phone: u.phone || '+244 923 000 001' });
+    }
   });
   memoryUsers.forEach(u => {
-    if (u && u.id) {
+    if (u && u.id && !isDeleted(u.id)) {
       const isMaster = u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.id === 'usr_admin';
       const initial = map.get(u.id);
       map.set(u.id, {
@@ -424,17 +437,23 @@ export function getCurrentUser(): User | null {
   if (typeof window === 'undefined') return null;
   const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
   if (!currentId) return null;
+  if (
+    currentId !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
+    currentId !== 'usr_admin' &&
+    memoryDeletedUserIds.includes(currentId)
+  ) {
+    localStorage.removeItem(DB_KEYS.CURRENT_USER_ID);
+    localStorage.removeItem('baba_current_user_obj');
+    return null;
+  }
   const users = getUsers();
   let user = users.find(u => u && (u.id === currentId || u.id?.toLowerCase() === currentId.toLowerCase()));
-  if (!user) {
-    user = INITIAL_USERS.find(u => u && (u.id === currentId || u.id?.toLowerCase() === currentId.toLowerCase()));
-  }
   if (!user) {
     try {
       const rawCached = localStorage.getItem('baba_current_user_obj');
       if (rawCached) {
         const parsed = JSON.parse(rawCached);
-        if (parsed && (parsed.id === currentId || !currentId)) {
+        if (parsed && (parsed.id === currentId || !currentId) && !memoryDeletedUserIds.includes(parsed.id)) {
           user = parsed;
         }
       }
@@ -733,13 +752,13 @@ export async function loginUser(identifier: string, password?: string): Promise<
   });
 
   // 3. Se não encontrado localmente, verificar no Firestore por ID direto ou autenticação Firebase
-  if (!matched) {
+  if (!matched && !memoryDeletedUserIds.includes(rawId)) {
     try {
       const directDoc = await Promise.race([
         getDoc(doc(firestore, 'users', rawId)).catch(() => null),
         new Promise<null>(res => setTimeout(() => res(null), 1200))
       ]);
-      if (directDoc && directDoc.exists()) {
+      if (directDoc && directDoc.exists() && !memoryDeletedUserIds.includes(directDoc.id)) {
         const raw = directDoc.data();
         matched = { id: directDoc.id, ...raw, phone: raw?.phone || '+244 923 000 001' } as User;
       }
@@ -752,6 +771,13 @@ export async function loginUser(identifier: string, password?: string): Promise<
       u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
       u.id === 'usr_admin';
     if (isAdmin) return;
+
+    if (memoryDeletedUserIds.includes(u.id)) {
+      try {
+        await signOut(auth);
+      } catch {}
+      throw new Error('Esta conta foi eliminada e já não existe na plataforma.');
+    }
 
     if (u.accountStatus === 'em_processamento') {
       try {
@@ -771,6 +797,16 @@ export async function loginUser(identifier: string, password?: string): Promise<
         'Documentação ou dados do Bilhete de Identidade não conformes.';
       throw new Error(`A sua conta foi rejeitada por motivo: ${motivo}`);
     }
+
+    if (u.accountStatus === 'suspenso') {
+      try {
+        await signOut(auth);
+      } catch {}
+      const motivo =
+        (u.suspensionReason || u.rejectionReason || '').trim() ||
+        'Suspensão administrativa temporária por motivos de segurança.';
+      throw new Error(`A sua conta encontra-se suspensa pelo Administrador. Motivo: ${motivo}`);
+    }
   };
 
   if (!matched && rawId.includes('@')) {
@@ -785,7 +821,7 @@ export async function loginUser(identifier: string, password?: string): Promise<
           }
         } catch {}
 
-        if (fsUser) {
+        if (fsUser && !memoryDeletedUserIds.includes(fsUser.id)) {
           fsUser.password = fsUser.password || passTerm;
           await assertAccountApproved(fsUser);
           memoryUsers = [fsUser, ...memoryUsers.filter(u => u && u.id !== fsUser!.id)];
@@ -798,7 +834,9 @@ export async function loginUser(identifier: string, password?: string): Promise<
       if (
         authOrStatusErr?.message &&
         (authOrStatusErr.message.includes('encontra-se em revisão') ||
-          authOrStatusErr.message.includes('foi rejeitada por motivo'))
+          authOrStatusErr.message.includes('foi rejeitada por motivo') ||
+          authOrStatusErr.message.includes('encontra-se suspensa') ||
+          authOrStatusErr.message.includes('foi eliminada'))
       ) {
         throw authOrStatusErr;
       }
@@ -945,6 +983,149 @@ export function resubmitKYCDocuments(
 
 export function getPendingKYCUsers(): User[] {
   return getUsers().filter(u => u.accountStatus === 'em_processamento');
+}
+
+function assertAdminCaller(): void {
+  const caller = getCurrentUser();
+  const isAdmin =
+    !!caller &&
+    (caller.role === 'admin' ||
+      caller.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+      caller.id === 'usr_admin');
+  if (!isAdmin) {
+    throw new Error('Apenas o Administrador tem permissão para suspender, reativar ou eliminar contas de utilizadores.');
+  }
+}
+
+export function suspendUser(userId: string, reason?: string): User {
+  assertAdminCaller();
+  if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin') {
+    throw new Error('Não é possível suspender a conta do Administrador Master.');
+  }
+  const idx = memoryUsers.findIndex(u => u && u.id === userId);
+  const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
+  if (!baseUser) throw new Error('Utilizador não encontrado');
+  if (baseUser.role === 'admin') {
+    throw new Error('Não é possível suspender uma conta de Administrador.');
+  }
+
+  const cleanReason =
+    (reason || '').trim() ||
+    'Conta suspensa temporariamente pelo Administrador para verificação de segurança.';
+  const updated: User = {
+    ...baseUser,
+    accountStatus: 'suspenso',
+    suspensionReason: cleanReason
+  };
+  if (idx !== -1) {
+    memoryUsers[idx] = updated;
+  } else {
+    memoryUsers = [updated, ...memoryUsers];
+  }
+  backupToStorage(DB_KEYS.USERS, memoryUsers);
+
+  createNotification(
+    userId,
+    'Conta Suspensa pelo Administrador',
+    `A tua conta foi suspensa. Motivo: ${cleanReason}`,
+    'sistema'
+  );
+
+  if (typeof window !== 'undefined' && localStorage.getItem(DB_KEYS.CURRENT_USER_ID) === userId) {
+    localStorage.setItem('baba_current_user_obj', JSON.stringify(updated));
+  }
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'users', userId), cleanForFirestore(updated), { merge: true }).catch(err =>
+    console.warn('Firestore suspend note:', err)
+  );
+
+  return updated;
+}
+
+export function reactivateUser(userId: string): User {
+  assertAdminCaller();
+  const idx = memoryUsers.findIndex(u => u && u.id === userId);
+  const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
+  if (!baseUser) throw new Error('Utilizador não encontrado');
+
+  const updated: User = {
+    ...baseUser,
+    accountStatus: 'ativo',
+    suspensionReason: '',
+    rejectionReason: '',
+    verifiedAt: baseUser.verifiedAt || new Date().toISOString()
+  };
+  if (idx !== -1) {
+    memoryUsers[idx] = updated;
+  } else {
+    memoryUsers = [updated, ...memoryUsers];
+  }
+  backupToStorage(DB_KEYS.USERS, memoryUsers);
+
+  createNotification(
+    userId,
+    'Conta Reativada pelo Administrador! 🇦🇴',
+    'A suspensão da tua conta foi levantada. Já podes iniciar sessão e operar normalmente na plataforma.',
+    'sistema'
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'users', userId), cleanForFirestore(updated), { merge: true }).catch(err =>
+    console.warn('Firestore reactivate note:', err)
+  );
+
+  return updated;
+}
+
+export function deleteUserAccount(userId: string): void {
+  assertAdminCaller();
+  if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin') {
+    throw new Error('Não é possível eliminar a conta do Administrador Master.');
+  }
+  const target = getUsers().find(u => u && u.id === userId);
+  if (target?.role === 'admin') {
+    throw new Error('Não é possível eliminar uma conta de Administrador.');
+  }
+
+  if (!memoryDeletedUserIds.includes(userId)) {
+    memoryDeletedUserIds = [...memoryDeletedUserIds, userId];
+    backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
+  }
+
+  memoryUsers = memoryUsers.filter(u => u && u.id !== userId);
+  backupToStorage(DB_KEYS.USERS, memoryUsers);
+
+  if (memoryWallets[userId]) {
+    delete memoryWallets[userId];
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+  }
+
+  // Cancelar/remover anúncios ativos de revenda pertencentes ao utilizador eliminado
+  const removedListingIds = memoryResaleListings
+    .filter(l => l && l.sellerId === userId)
+    .map(l => l.id);
+  memoryResaleListings = memoryResaleListings.filter(l => l && l.sellerId !== userId);
+  backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+
+  memoryUserProducts = memoryUserProducts.filter(up => up && up.currentOwnerId !== userId);
+  backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+
+  if (typeof window !== 'undefined' && localStorage.getItem(DB_KEYS.CURRENT_USER_ID) === userId) {
+    localStorage.removeItem(DB_KEYS.CURRENT_USER_ID);
+    localStorage.removeItem('baba_current_user_obj');
+    signOut(auth).catch(() => {});
+  }
+
+  dispatchDbChange();
+
+  deleteDoc(doc(firestore, 'users', userId)).catch(err =>
+    console.warn('Firestore delete user note:', err)
+  );
+  deleteDoc(doc(firestore, 'wallets', userId)).catch(() => {});
+  removedListingIds.forEach(listingId => {
+    deleteDoc(doc(firestore, 'resale_listings', listingId)).catch(() => {});
+  });
 }
 
 // ==========================================

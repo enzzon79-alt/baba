@@ -1,5 +1,5 @@
 export type UserRole = 'admin' | 'client';
-export type AccountStatus = 'ativo' | 'em_processamento' | 'rejeitado';
+export type AccountStatus = 'ativo' | 'em_processamento' | 'rejeitado' | 'suspenso';
 
 export interface User {
   id: string;
@@ -16,6 +16,7 @@ export interface User {
   idCardFront?: string;
   idCardBack?: string;
   rejectionReason?: string;
+  suspensionReason?: string;
   verifiedAt?: string;
   createdAt: string;
 }
