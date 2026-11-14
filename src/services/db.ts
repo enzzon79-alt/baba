@@ -120,6 +120,37 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   }
 }
 
+const ADMIN_ONLY_RESET_VERSION = 'admin_only_20261114_v1';
+const LOCAL_RESET_KEY = 'baba_local_reset_v';
+
+function applyLocalAdminOnlyResetOnce(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (localStorage.getItem(LOCAL_RESET_KEY) === ADMIN_ONLY_RESET_VERSION) return;
+    localStorage.setItem(DB_KEYS.USERS, JSON.stringify(INITIAL_USERS));
+    localStorage.setItem(DB_KEYS.DELETED_USERS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.WALLETS, JSON.stringify(INITIAL_WALLETS));
+    localStorage.setItem(DB_KEYS.TRANSACTIONS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.USER_PRODUCTS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.RESALE_LISTINGS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.NEGOTIATIONS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.NOTIFICATIONS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.DEPOSITS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.WITHDRAWALS, JSON.stringify([]));
+
+    const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
+    if (currentId && currentId !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
+      localStorage.removeItem(DB_KEYS.CURRENT_USER_ID);
+      localStorage.removeItem('baba_current_user_obj');
+    }
+    localStorage.setItem(LOCAL_RESET_KEY, ADMIN_ONLY_RESET_VERSION);
+  } catch {
+    // storage safe
+  }
+}
+
+applyLocalAdminOnlyResetOnce();
+
 // Initial hydration from backup storage for 0ms initial render
 memoryProducts = loadFromStorage(DB_KEYS.PRODUCTS, INITIAL_PRODUCTS);
 memoryDeletedUserIds = loadFromStorage(DB_KEYS.DELETED_USERS, []);
@@ -131,17 +162,88 @@ memoryTransactions = loadFromStorage(DB_KEYS.TRANSACTIONS, INITIAL_TRANSACTIONS)
 memoryUserProducts = loadFromStorage(DB_KEYS.USER_PRODUCTS, []);
 memoryResaleListings = loadFromStorage(DB_KEYS.RESALE_LISTINGS, INITIAL_RESALE_LISTINGS);
 memoryNegotiations = loadFromStorage(DB_KEYS.NEGOTIATIONS, INITIAL_NEGOTIATIONS);
-if (!memoryNegotiations || memoryNegotiations.length === 0) {
-  memoryNegotiations = INITIAL_NEGOTIATIONS;
-}
 memoryNotifications = loadFromStorage(DB_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
 memoryDeposits = loadFromStorage(DB_KEYS.DEPOSITS, INITIAL_DEPOSITS);
-if (!memoryDeposits || memoryDeposits.length === 0) {
-  memoryDeposits = INITIAL_DEPOSITS;
-}
 memoryWithdrawals = loadFromStorage(DB_KEYS.WITHDRAWALS, INITIAL_WITHDRAWALS);
-if (!memoryWithdrawals || memoryWithdrawals.length === 0) {
-  memoryWithdrawals = INITIAL_WITHDRAWALS;
+
+async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
+  const adminId = 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+  try {
+    const adminRef = doc(firestore, 'users', adminId);
+    const adminSnap = await Promise.race([
+      getDoc(adminRef).catch(() => null),
+      new Promise<null>(res => setTimeout(() => res(null), 2500))
+    ]);
+
+    if (!adminSnap) {
+      return;
+    }
+
+    if (adminSnap.exists() && adminSnap.data()?.globalCleanResetVersion === ADMIN_ONLY_RESET_VERSION) {
+      return;
+    }
+
+    const purgeCollection = async (colName: string, keepDocId?: string) => {
+      try {
+        const snap = await Promise.race([
+          getDocs(collection(firestore, colName)),
+          new Promise<null>(res => setTimeout(() => res(null), 2500))
+        ]);
+        if (!snap) return;
+        const deletions: Promise<void>[] = [];
+        snap.forEach(d => {
+          if (!keepDocId || d.id !== keepDocId) {
+            deletions.push(deleteDoc(doc(firestore, colName, d.id)).catch(() => {}));
+          }
+        });
+        if (deletions.length > 0) {
+          await Promise.all(deletions);
+        }
+      } catch (err) {
+        console.warn(`Firestore purge notice (${colName}):`, err);
+      }
+    };
+
+    await Promise.all([
+      purgeCollection('users', adminId),
+      purgeCollection('wallets', adminId),
+      purgeCollection('resale_listings'),
+      purgeCollection('user_products'),
+      purgeCollection('negotiations'),
+      purgeCollection('notifications'),
+      purgeCollection('deposits'),
+      purgeCollection('withdrawals')
+    ]);
+
+    const adminUserData = {
+      ...cleanForFirestore(INITIAL_USERS[0]),
+      globalCleanResetVersion: ADMIN_ONLY_RESET_VERSION
+    };
+    await setDoc(adminRef, adminUserData, { merge: true }).catch(() => {});
+    await setDoc(doc(firestore, 'wallets', adminId), INITIAL_WALLETS[adminId], { merge: true }).catch(() => {});
+
+    memoryUsers = [...INITIAL_USERS];
+    memoryWallets = { ...INITIAL_WALLETS };
+    memoryResaleListings = [];
+    memoryUserProducts = [];
+    memoryNegotiations = [];
+    memoryNotifications = [];
+    memoryDeposits = [];
+    memoryWithdrawals = [];
+    memoryTransactions = [];
+    backupToStorage(DB_KEYS.USERS, memoryUsers);
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    backupToStorage(DB_KEYS.RESALE_LISTINGS, []);
+    backupToStorage(DB_KEYS.USER_PRODUCTS, []);
+    backupToStorage(DB_KEYS.NEGOTIATIONS, []);
+    backupToStorage(DB_KEYS.NOTIFICATIONS, []);
+    backupToStorage(DB_KEYS.DEPOSITS, []);
+    backupToStorage(DB_KEYS.WITHDRAWALS, []);
+    backupToStorage(DB_KEYS.TRANSACTIONS, []);
+    dispatchDbChange();
+  } catch (err) {
+    console.warn('Admin-only purge note:', err);
+  }
 }
 
 /**
@@ -172,8 +274,11 @@ export function initDatabase(): void {
     err => console.warn('Products live listener notice:', err.message)
   );
 
-  // 2. Subscribe to Firestore Users
-  onSnapshot(
+  void (async () => {
+    await performOneTimeFirestoreAdminOnlyPurge();
+
+    // 2. Subscribe to Firestore Users
+    onSnapshot(
     collection(firestore, 'users'),
     async snap => {
       if (snap.empty) {
@@ -194,7 +299,7 @@ export function initDatabase(): void {
           const u = d.data() as User;
           if (u) {
             const uid = d.id || u.id;
-            const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || uid === 'usr_admin';
+            const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
             if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
             const localMatch = localById.get(uid);
             users.push({
@@ -340,6 +445,7 @@ export function initDatabase(): void {
     },
     err => console.warn('Transactions live listener notice:', err.message)
   );
+  })();
 }
 
 // ==========================================
@@ -410,7 +516,6 @@ export function getUsers(): User[] {
   const map = new Map<string, User>();
   const isDeleted = (id: string) =>
     id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
-    id !== 'usr_admin' &&
     memoryDeletedUserIds.includes(id);
 
   INITIAL_USERS.forEach(u => {
@@ -420,7 +525,7 @@ export function getUsers(): User[] {
   });
   memoryUsers.forEach(u => {
     if (u && u.id && !isDeleted(u.id)) {
-      const isMaster = u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.id === 'usr_admin';
+      const isMaster = u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
       const initial = map.get(u.id);
       map.set(u.id, {
         ...(initial || {}),
