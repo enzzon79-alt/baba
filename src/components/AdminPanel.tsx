@@ -59,6 +59,7 @@ import {
   deleteUserAccount,
   getDeposits,
   approveDeposit,
+  rejectDeposit,
   getWithdrawals,
   processWithdrawal,
   getResaleListings,
@@ -72,6 +73,7 @@ import {
   adjustUserBalance,
   dispatchDbChange,
   syncUsersFromFirestore,
+  syncAdminCollectionsFromFirestore,
   DB_STATE_EVENT
 } from '../services/db';
 import { User, DepositRequest, WithdrawalRequest, ResaleListing, Negotiation } from '../types';
@@ -211,8 +213,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isBatchLaunching, setIsBatchLaunching] = useState(false);
   const [activeNegotiationProductFilter, setActiveNegotiationProductFilter] = useState<string>('all');
 
-  // Selected Active Negotiation Chat
+  // Selected Active Negotiation Chat (live-synced from negotiations list)
   const [selectedNegotiation, setSelectedNegotiation] = useState<Negotiation | null>(null);
+  const liveSelectedNegotiation = useMemo(() => {
+    if (!selectedNegotiation) return null;
+    return negotiations.find(n => n.id === selectedNegotiation.id) || selectedNegotiation;
+  }, [negotiations, selectedNegotiation]);
   const [chatMessage, setChatMessage] = useState('');
   const [counterPriceInput, setCounterPriceInput] = useState<number>(0);
 
@@ -231,11 +237,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     syncUsersFromFirestore().then(synced => {
       setUsers([...synced]);
     });
+    syncAdminCollectionsFromFirestore().then(() => {
+      refreshData();
+    });
   };
 
   useEffect(() => {
     syncUsersFromFirestore().then(synced => {
       setUsers([...synced]);
+    });
+    syncAdminCollectionsFromFirestore().then(() => {
+      refreshData();
     });
     const handleDbChange = () => refreshData();
     window.addEventListener(DB_STATE_EVENT, handleDbChange);
@@ -287,9 +299,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleRejectDeposit = (d: DepositRequest) => {
     try {
-      d.status = 'rejeitado';
-      dispatchDbChange();
-      showAlert(`Depósito de ${formatKz(d.amount)} recusado.`, 'error');
+      rejectDeposit(d.id);
+      showAlert(`Depósito de ${formatKz(d.amount)} recusado. O utilizador foi notificado.`, 'error');
       refreshData();
     } catch (err: any) {
       showAlert(err.message || 'Erro ao recusar depósito.', 'error');
@@ -344,11 +355,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Multi-Persona Negotiation Handlers (O Administrador decide quantas conversas de 1 a 5 quer começar)
+  // Multi-Persona Negotiation Handlers (O Administrador pode abrir 1 a 5 conversas e trocar mensagens até acordo)
   const handleOpenPersonaModal = (item: ResaleListing) => {
     setNegotiatingListing(item);
-    // Por padrão o Administrador começa com 1 conversa, mas pode escolher livremente 1, 2, 3, 4 ou 5
-    setSelectedPersonaIds([DEFAULT_PERSONAS[0].id]);
+    // Por padrão seleciona todas as 5 conversas para poder trocar mensagens em todas até chegarem a um acordo
+    setSelectedPersonaIds(DEFAULT_PERSONAS.map(p => p.id));
     const initialOffers: Record<string, { name: string; price: number; message: string }> = {};
     DEFAULT_PERSONAS.forEach((p) => {
       const discounted = Math.round(item.listingPrice * (1 - p.discountPercent / 100));
@@ -455,6 +466,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleConcludePurchase = (neg: Negotiation) => {
+    if (neg.status !== 'aceite') {
+      showAlert(
+        'Para concluir por negociação, troca conversa com o vendedor nesta proposta até chegarem a um acordo ("Acordo Aceite!").',
+        'info'
+      );
+      return;
+    }
     try {
       purchaseResaleListing(neg.listingId, currentUser.id, neg.currentProposedPrice);
       showAlert(`Compra concluída com sucesso por ${formatKz(neg.currentProposedPrice)}! O vendedor ${neg.sellerName} recebeu o saldo na carteira.`, 'success');
@@ -465,16 +483,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const handleAcceptSellerCounterOffer = (neg: Negotiation) => {
+    try {
+      const updated = respondBuyerNegotiation(neg.id, 'aceitar');
+      setSelectedNegotiation(updated);
+      showAlert(`Acordo fechado com ${neg.sellerName} por ${formatKz(updated.currentProposedPrice)}! Já podes concluir o pagamento.`, 'success');
+      refreshData();
+    } catch (err: any) {
+      showAlert(err.message || 'Erro ao aceitar valor do vendedor.', 'error');
+    }
+  };
+
   const handleSendPersonaChatMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedNegotiation || !chatMessage.trim()) return;
+    if (!liveSelectedNegotiation || !chatMessage.trim()) return;
     try {
-      sendNegotiationMessage(
-        selectedNegotiation.id,
-        selectedNegotiation.buyerId,
-        selectedNegotiation.buyerName,
+      const updated = sendNegotiationMessage(
+        liveSelectedNegotiation.id,
+        liveSelectedNegotiation.buyerId,
+        liveSelectedNegotiation.buyerName,
         chatMessage.trim()
       );
+      setSelectedNegotiation(updated);
       setChatMessage('');
       refreshData();
     } catch (err: any) {
@@ -483,20 +513,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleSendPersonaCounterOffer = () => {
-    if (!selectedNegotiation || counterPriceInput <= 0) {
+    if (!liveSelectedNegotiation || counterPriceInput <= 0) {
       showAlert('Por favor insere um valor de contraproposta válido.', 'error');
       return;
     }
     try {
-      sendNegotiationMessage(
-        selectedNegotiation.id,
-        selectedNegotiation.buyerId,
-        selectedNegotiation.buyerName,
+      const updated = sendNegotiationMessage(
+        liveSelectedNegotiation.id,
+        liveSelectedNegotiation.buyerId,
+        liveSelectedNegotiation.buyerName,
         `Envio nova proposta de preço: ${formatKz(counterPriceInput)}. Podemos fechar por este valor?`,
         counterPriceInput
       );
-      setCounterPriceInput(0);
-      showAlert(`Contraproposta de ${formatKz(counterPriceInput)} enviada como ${selectedNegotiation.buyerName}!`, 'success');
+      setSelectedNegotiation(updated);
+      setCounterPriceInput(updated.currentProposedPrice);
+      showAlert(`Nova proposta de ${formatKz(updated.currentProposedPrice)} enviada como ${liveSelectedNegotiation.buyerName}!`, 'success');
       refreshData();
     } catch (err: any) {
       showAlert(err.message || 'Erro ao enviar contraproposta.', 'error');
@@ -3408,17 +3439,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           <span>Conversar como {neg.buyerName.split(' ')[0]}</span>
                         </button>
 
-                        {/* Conclude Purchase Button */}
+                        {/* Conclude Purchase Button (only enabled when agreement is reached) */}
                         {!isConcluded && !isCancelled && (
-                          <button
-                            type="button"
-                            onClick={() => handleConcludePurchase(neg)}
-                            className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-                            title="Concluir a compra por este valor negociado e creditar o vendedor"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Pagar {formatKz(neg.currentProposedPrice)}</span>
-                          </button>
+                          isAgreed ? (
+                            <button
+                              type="button"
+                              onClick={() => handleConcludePurchase(neg)}
+                              className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                              title="Acordo alcançado! Concluir a compra e creditar o vendedor"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Pagar {formatKz(neg.currentProposedPrice)}</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedNegotiation(neg);
+                                setCounterPriceInput(neg.currentProposedPrice);
+                              }}
+                              className="py-2.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                              title="Troca conversa até chegarem a um acordo antes de concluir"
+                            >
+                              <Handshake className="w-3.5 h-3.5" />
+                              <span>Negociar Acordo</span>
+                            </button>
+                          )
                         )}
                       </div>
                     </div>
@@ -4417,19 +4463,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             className="px-3.5 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-amber-400 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
                           >
                             <MessageSquare className="w-3.5 h-3.5" />
-                            <span>Abrir Chat como {currentOffer.name.split(' ')[0]}</span>
+                            <span>Conversar como {currentOffer.name.split(' ')[0]}</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleConcludePurchase(existingNeg);
-                              setNegotiatingListing(null);
-                            }}
-                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Pagar {formatKz(existingNeg.currentProposedPrice)}</span>
-                          </button>
+                          {existingNeg.status === 'aceite' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleConcludePurchase(existingNeg);
+                                setNegotiatingListing(null);
+                              }}
+                              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Pagar {formatKz(existingNeg.currentProposedPrice)}</span>
+                            </button>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold">
+                              Em conversa até acordo
+                            </span>
+                          )}
                         </>
                       ) : (
                         <button
@@ -4486,146 +4538,216 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* ======================================================== */}
       {/* MODAL: CHAT DE NEGOCIAÇÃO ABERTO (SOB IDENTIDADE DA PERSONA) */}
       {/* ======================================================== */}
-      {selectedNegotiation && (
-        <div
-          onClick={() => setSelectedNegotiation(null)}
-          className="fixed inset-0 z-[130] bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fadeIn"
-        >
+      {liveSelectedNegotiation && (() => {
+        const sameListingNegs = negotiations.filter(n => n.listingId === liveSelectedNegotiation.listingId);
+        const isClosed = liveSelectedNegotiation.status === 'concluida' || liveSelectedNegotiation.status === 'cancelada';
+        const isAgreed = liveSelectedNegotiation.status === 'aceite';
+        return (
           <div
-            onClick={e => e.stopPropagation()}
-            className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl border border-neutral-200 flex flex-col max-h-[88vh] animate-scaleUp my-auto"
+            onClick={() => setSelectedNegotiation(null)}
+            className="fixed inset-0 z-[130] bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fadeIn"
           >
-            {/* Header */}
-            <div className="p-4 bg-neutral-950 text-white flex items-center justify-between border-b border-neutral-800">
-              <div className="flex items-center gap-3 min-w-0">
-                <img
-                  src={selectedNegotiation.productImage}
-                  alt={selectedNegotiation.productName}
-                  className="w-12 h-12 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700"
-                />
-                <div className="min-w-0">
-                  <h3 className="text-xs font-black text-white truncate">
-                    {selectedNegotiation.productName}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[11px] text-neutral-300">
-                      Vendedor: <strong>{selectedNegotiation.sellerName}</strong>
-                    </span>
-                    <span className="text-neutral-500">•</span>
-                    <span className="text-xs text-amber-400 font-black">
-                      {formatKz(selectedNegotiation.currentProposedPrice)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelectedNegotiation(null)}
-                className="p-1.5 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Persona Active Notice Banner */}
-            <div className="px-4 py-2.5 bg-blue-50 border-b border-blue-200 flex items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 text-blue-900 font-bold min-w-0">
-                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse shrink-0" />
-                <span className="truncate">
-                  Estás a conversar como: <strong className="text-blue-950 font-black underline">{selectedNegotiation.buyerName}</strong>
-                </span>
-              </div>
-              <span className="text-[10px] uppercase font-mono font-bold text-blue-700 shrink-0">
-                {selectedNegotiation.status}
-              </span>
-            </div>
-
-            {/* Messages Body */}
-            <div className="p-4 overflow-y-auto space-y-3 flex-1 bg-neutral-50/50 min-h-[220px]">
-              {selectedNegotiation.messages.map(m => {
-                const isSentByPersona = m.senderId === selectedNegotiation.buyerId;
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${isSentByPersona ? 'items-end' : 'items-start'}`}
-                  >
-                    <span className="text-[10px] text-neutral-400 px-1 mb-0.5">
-                      {isSentByPersona ? `Tu (como ${selectedNegotiation.buyerName})` : `${m.senderName} (Vendedor)`} • {new Date(m.timestamp).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <div
-                      className={`p-3 rounded-2xl text-xs max-w-[85%] leading-relaxed ${
-                        isSentByPersona
-                          ? 'bg-neutral-900 text-amber-400 rounded-tr-xs shadow-xs'
-                          : 'bg-white text-neutral-900 border border-neutral-200 rounded-tl-xs shadow-2xs'
-                      }`}
-                    >
-                      {m.text}
+            <div
+              onClick={e => e.stopPropagation()}
+              className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl border border-neutral-200 flex flex-col max-h-[90vh] animate-scaleUp my-auto"
+            >
+              {/* Header */}
+              <div className="p-4 bg-neutral-950 text-white flex items-center justify-between border-b border-neutral-800">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={liveSelectedNegotiation.productImage}
+                    alt={liveSelectedNegotiation.productName}
+                    className="w-12 h-12 rounded-xl object-cover bg-neutral-800 shrink-0 border border-neutral-700"
+                  />
+                  <div className="min-w-0">
+                    <h3 className="text-xs font-black text-white truncate">
+                      {liveSelectedNegotiation.productName}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[11px] text-neutral-300">
+                        Vendedor: <strong>{liveSelectedNegotiation.sellerName}</strong>
+                      </span>
+                      <span className="text-neutral-500">•</span>
+                      <span className="text-xs text-amber-400 font-black">
+                        {formatKz(liveSelectedNegotiation.currentProposedPrice)}
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                </div>
 
-            {/* Counteroffer Tool inside Chat */}
-            <div className="p-3 bg-neutral-100/80 border-t border-neutral-200 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 flex-1">
-                <span className="text-[11px] font-bold text-neutral-600 whitespace-nowrap">
-                  Contrapropor Valor (Kz):
-                </span>
-                <input
-                  type="number"
-                  value={counterPriceInput || ''}
-                  onChange={e => setCounterPriceInput(Number(e.target.value))}
-                  placeholder="Novo preço em Kz"
-                  step={500}
-                  className="w-32 p-1.5 bg-white border border-neutral-300 rounded-lg text-xs font-black text-neutral-900 tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
                 <button
                   type="button"
-                  onClick={handleSendPersonaCounterOffer}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer shrink-0"
+                  onClick={() => setSelectedNegotiation(null)}
+                  className="p-1.5 text-neutral-400 hover:text-white rounded-lg cursor-pointer"
                 >
-                  Enviar Contraproposta
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Conclude Purchase Action */}
-              <button
-                type="button"
-                onClick={() => handleConcludePurchase(selectedNegotiation)}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-                title="Concluir a compra por este valor e pagar ao vendedor"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Pagar & Concluir</span>
-              </button>
-            </div>
+              {/* 5-Conversation Switcher Bar */}
+              {sameListingNegs.length > 1 && (
+                <div className="px-3 py-2 bg-neutral-900 border-b border-neutral-800 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase shrink-0 mr-1">
+                    Conversas ({sameListingNegs.length}):
+                  </span>
+                  {sameListingNegs.map((item, idx) => {
+                    const active = item.id === liveSelectedNegotiation.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedNegotiation(item);
+                          setCounterPriceInput(item.currentProposedPrice);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
+                          active
+                            ? 'bg-amber-400 text-neutral-950 shadow-xs'
+                            : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                        }`}
+                      >
+                        <span>#{idx + 1} {item.buyerName.split(' ')[0]}</span>
+                        {item.status === 'aceite' && <span>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-            {/* Message input */}
-            <form
-              onSubmit={handleSendPersonaChatMessage}
-              className="p-3 bg-white border-t border-neutral-200 flex items-center gap-2"
-            >
-              <input
-                type="text"
-                value={chatMessage}
-                onChange={e => setChatMessage(e.target.value)}
-                placeholder={`Escrever mensagem como ${selectedNegotiation.buyerName}...`}
-                className="flex-1 p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
-              />
-              <button
-                type="submit"
-                disabled={!chatMessage.trim()}
-                className="p-2.5 bg-neutral-950 text-amber-400 hover:bg-neutral-800 rounded-xl transition-colors cursor-pointer disabled:opacity-40"
-                title={`Enviar como ${selectedNegotiation.buyerName}`}
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
+              {/* Persona Active Notice Banner */}
+              <div className="px-4 py-2.5 bg-blue-50 border-b border-blue-200 flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-blue-900 font-bold min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse shrink-0" />
+                  <span className="truncate">
+                    A conversar como: <strong className="text-blue-950 font-black underline">{liveSelectedNegotiation.buyerName}</strong>
+                  </span>
+                </div>
+                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded shrink-0 ${
+                  isAgreed ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                }`}>
+                  {isAgreed ? '✓ Acordo Aceite' : liveSelectedNegotiation.status}
+                </span>
+              </div>
+
+              {/* Messages Body */}
+              <div className="p-4 overflow-y-auto space-y-3 flex-1 bg-neutral-50/50 min-h-[220px]">
+                {liveSelectedNegotiation.messages.length === 0 ? (
+                  <p className="text-center text-xs text-neutral-400 py-8">
+                    Inicia a conversa com o vendedor abaixo até chegarem a um acordo.
+                  </p>
+                ) : (
+                  liveSelectedNegotiation.messages.map(m => {
+                    const isSentByPersona = m.senderId === liveSelectedNegotiation.buyerId;
+                    return (
+                      <div
+                        key={m.id}
+                        className={`flex flex-col ${isSentByPersona ? 'items-end' : 'items-start'}`}
+                      >
+                        <span className="text-[10px] text-neutral-400 px-1 mb-0.5">
+                          {isSentByPersona ? `Tu (como ${liveSelectedNegotiation.buyerName})` : `${m.senderName} (Vendedor)`} • {new Date(m.timestamp).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <div
+                          className={`p-3 rounded-2xl text-xs max-w-[85%] leading-relaxed ${
+                            isSentByPersona
+                              ? 'bg-neutral-900 text-amber-400 rounded-tr-xs shadow-xs'
+                              : 'bg-white text-neutral-900 border border-neutral-200 rounded-tl-xs shadow-2xs'
+                          }`}
+                        >
+                          {m.text}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Seller Counteroffer quick accept banner when seller proposed a counter price */}
+              {!isClosed && !isAgreed && liveSelectedNegotiation.lastOfferBy === 'seller' && liveSelectedNegotiation.status === 'contraproposta' && (
+                <div className="px-3 py-2 bg-amber-50 border-t border-amber-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="font-bold text-amber-950">
+                    O vendedor propôs {formatKz(liveSelectedNegotiation.currentProposedPrice)}:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleAcceptSellerCounterOffer(liveSelectedNegotiation)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-lg flex items-center gap-1 cursor-pointer shadow-xs"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Aceitar Proposta do Vendedor</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Counteroffer Tool inside Chat (always open until closed so Admin & seller can negotiate freely) */}
+              {!isClosed && (
+                <div className="p-3 bg-neutral-100/80 border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+                    <span className="text-[11px] font-bold text-neutral-600 whitespace-nowrap">
+                      Propor Valor (Kz):
+                    </span>
+                    <input
+                      type="number"
+                      value={counterPriceInput || ''}
+                      onChange={e => setCounterPriceInput(Number(e.target.value))}
+                      placeholder="Novo preço em Kz"
+                      step={500}
+                      className="w-28 p-1.5 bg-white border border-neutral-300 rounded-lg text-xs font-black text-neutral-900 tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendPersonaCounterOffer}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer shrink-0"
+                    >
+                      Enviar Proposta
+                    </button>
+                  </div>
+
+                  {/* Conclude Purchase Action (requires agreement reached) */}
+                  {isAgreed ? (
+                    <button
+                      type="button"
+                      onClick={() => handleConcludePurchase(liveSelectedNegotiation)}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-lg transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                      title="Acordo aceite! Concluir compra e creditar vendedor"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Pagar & Concluir ({formatKz(liveSelectedNegotiation.currentProposedPrice)})</span>
+                    </button>
+                  ) : (
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-200 shrink-0">
+                      Conversa até acordo
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Message input */}
+              {!isClosed && (
+                <form
+                  onSubmit={handleSendPersonaChatMessage}
+                  className="p-3 bg-white border-t border-neutral-200 flex items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    value={chatMessage}
+                    onChange={e => setChatMessage(e.target.value)}
+                    placeholder={`Escrever mensagem como ${liveSelectedNegotiation.buyerName}...`}
+                    className="flex-1 p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatMessage.trim()}
+                    className="p-2.5 bg-neutral-950 text-amber-400 hover:bg-neutral-800 rounded-xl transition-colors cursor-pointer disabled:opacity-40"
+                    title={`Enviar como ${liveSelectedNegotiation.buyerName}`}
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

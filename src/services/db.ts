@@ -623,6 +623,82 @@ export async function syncUsersFromFirestore(): Promise<User[]> {
   return getUsers();
 }
 
+export async function syncAdminCollectionsFromFirestore(): Promise<void> {
+  try {
+    const withTimeout = <T,>(p: Promise<T>) =>
+      Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), 3000))]);
+
+    const [depSnap, wthSnap, listSnap, negSnap, walSnap, txSnap] = await Promise.all([
+      withTimeout(getDocs(collection(firestore, 'deposits'))),
+      withTimeout(getDocs(collection(firestore, 'withdrawals'))),
+      withTimeout(getDocs(collection(firestore, 'resale_listings'))),
+      withTimeout(getDocs(collection(firestore, 'negotiations'))),
+      withTimeout(getDocs(collection(firestore, 'wallets'))),
+      withTimeout(getDocs(collection(firestore, 'transactions')))
+    ]);
+
+    if (depSnap && !depSnap.empty) {
+      const map = new Map<string, DepositRequest>();
+      depSnap.forEach(d => map.set(d.id, d.data() as DepositRequest));
+      memoryDeposits.forEach(ld => { if (ld?.id && !map.has(ld.id)) map.set(ld.id, ld); });
+      memoryDeposits = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+    }
+
+    if (wthSnap && !wthSnap.empty) {
+      const map = new Map<string, WithdrawalRequest>();
+      wthSnap.forEach(d => map.set(d.id, d.data() as WithdrawalRequest));
+      memoryWithdrawals.forEach(lw => { if (lw?.id && !map.has(lw.id)) map.set(lw.id, lw); });
+      memoryWithdrawals = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+    }
+
+    if (listSnap && !listSnap.empty) {
+      const map = new Map<string, ResaleListing>();
+      listSnap.forEach(d => map.set(d.id, d.data() as ResaleListing));
+      memoryResaleListings.forEach(ll => { if (ll?.id && !map.has(ll.id)) map.set(ll.id, ll); });
+      memoryResaleListings = Array.from(map.values());
+      backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+    }
+
+    if (negSnap && !negSnap.empty) {
+      const map = new Map<string, Negotiation>();
+      negSnap.forEach(d => map.set(d.id, d.data() as Negotiation));
+      memoryNegotiations.forEach(ln => { if (ln?.id && !map.has(ln.id)) map.set(ln.id, ln); });
+      memoryNegotiations = Array.from(map.values());
+      backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+    }
+
+    if (walSnap && !walSnap.empty) {
+      const nextWallets: Record<string, Wallet> = { ...memoryWallets };
+      walSnap.forEach(d => {
+        const w = d.data() as Wallet;
+        if (w) nextWallets[d.id || w.userId] = w;
+      });
+      memoryWallets = nextWallets;
+      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    }
+
+    if (txSnap && !txSnap.empty) {
+      const map = new Map<string, Transaction>();
+      txSnap.forEach(d => map.set(d.id, d.data() as Transaction));
+      memoryTransactions.forEach(lt => { if (lt?.id && !map.has(lt.id)) map.set(lt.id, lt); });
+      memoryTransactions = Array.from(map.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+    }
+
+    dispatchDbChange();
+  } catch (err) {
+    console.warn('syncAdminCollectionsFromFirestore notice:', err);
+  }
+}
+
 export function getCurrentUser(): User | null {
   if (typeof window === 'undefined') return null;
   const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
@@ -1535,7 +1611,7 @@ export function requestDeposit(
   amount: number,
   paymentMethod: string,
   reference: string,
-  autoApprove = false,
+  _autoApprove = false,
   receiptProof?: string
 ): DepositRequest {
   const user = getUsers().find(u => u.id === userId);
@@ -1547,40 +1623,21 @@ export function requestDeposit(
     paymentMethod,
     reference,
     receiptProof,
-    status: autoApprove ? 'aprovado' : 'pendente',
+    status: 'pendente',
     createdAt: new Date().toISOString()
   };
 
   memoryDeposits = [newDeposit, ...memoryDeposits];
   backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
 
-  if (autoApprove) {
-    const wallet = getWallet(userId);
-    wallet.availableBalance += amount;
-    wallet.totalDeposited += amount;
-    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-
-    const tx: Transaction = {
-      id: `tx_${Date.now()}`,
-      userId,
-      userName: user ? user.name : 'Cliente',
-      amount,
-      type: 'carregamento',
-      description: `Carregamento de Carteira via Multicaixa (${reference})`,
-      status: 'confirmada',
-      reference,
-      createdAt: new Date().toISOString()
-    };
-    memoryTransactions = [tx, ...memoryTransactions];
-    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-
-    setDoc(doc(firestore, 'wallets', userId), wallet, { merge: true }).catch(err =>
-      console.warn('Firestore wallet deposit note:', err)
-    );
-    setDoc(doc(firestore, 'transactions', tx.id), tx).catch(err =>
-      console.warn('Firestore tx save note:', err)
-    );
-  }
+  createNotification(
+    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    'Novo Depósito Pendente de Aprovação 💰',
+    `${newDeposit.userName} solicitou um depósito de ${formatMoney(amount)} (Ref: ${reference}). Aprova no Painel do Adm para creditar na carteira.`,
+    'sistema',
+    'admin',
+    newDeposit.id
+  );
 
   dispatchDbChange();
   setDoc(doc(firestore, 'deposits', newDeposit.id), cleanForFirestore(newDeposit)).catch(err =>
@@ -1620,21 +1677,46 @@ export function approveDeposit(depositId: string): DepositRequest {
 
   createNotification(
     deposit.userId,
-    'Carregamento Creditado com Sucesso! 💰',
-    `O teu carregamento de ${formatMoney(deposit.amount)} foi validado e creditado na tua carteira.`,
+    'Depósito Aprovado & Creditado! 💰',
+    `O teu depósito de ${formatMoney(deposit.amount)} foi aprovado pelo Administrador e creditado na tua carteira.`,
     'sistema',
     'carteira'
   );
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'deposits', depositId), deposit, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'deposits', depositId), cleanForFirestore(deposit), { merge: true }).catch(err =>
     console.warn('Firestore approve deposit note:', err)
   );
-  setDoc(doc(firestore, 'wallets', deposit.userId), wallet, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'wallets', deposit.userId), cleanForFirestore(wallet), { merge: true }).catch(err =>
     console.warn('Firestore wallet credit note:', err)
   );
-  setDoc(doc(firestore, 'transactions', tx.id), tx).catch(err =>
+  setDoc(doc(firestore, 'transactions', tx.id), cleanForFirestore(tx)).catch(err =>
     console.warn('Firestore tx save note:', err)
+  );
+
+  return deposit;
+}
+
+export function rejectDeposit(depositId: string, reason?: string): DepositRequest {
+  const idx = memoryDeposits.findIndex(d => d.id === depositId);
+  if (idx === -1) throw new Error('Pedido de carregamento não encontrado');
+  const deposit = memoryDeposits[idx];
+  if (deposit.status !== 'pendente') return deposit;
+
+  deposit.status = 'rejeitado';
+  backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+
+  createNotification(
+    deposit.userId,
+    'Depósito Recusado pelo Administrador',
+    `O teu pedido de depósito de ${formatMoney(deposit.amount)} (Ref: ${deposit.reference}) foi recusado.${reason ? ` Motivo: ${reason}` : ''}`,
+    'sistema',
+    'carteira'
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'deposits', depositId), cleanForFirestore(deposit), { merge: true }).catch(err =>
+    console.warn('Firestore reject deposit note:', err)
   );
 
   return deposit;
@@ -1671,11 +1753,20 @@ export function requestWithdrawal(
   memoryWithdrawals = [newWithdrawal, ...memoryWithdrawals];
   backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
 
+  createNotification(
+    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    'Novo Saque Pendente de Aprovação 🏦',
+    `${newWithdrawal.userName} solicitou um levantamento de ${formatMoney(amount)} para ${bankName} (${iban}).`,
+    'sistema',
+    'admin',
+    newWithdrawal.id
+  );
+
   dispatchDbChange();
-  setDoc(doc(firestore, 'wallets', userId), wallet, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'wallets', userId), cleanForFirestore(wallet), { merge: true }).catch(err =>
     console.warn('Firestore wallet freeze note:', err)
   );
-  setDoc(doc(firestore, 'withdrawals', newWithdrawal.id), newWithdrawal).catch(err =>
+  setDoc(doc(firestore, 'withdrawals', newWithdrawal.id), cleanForFirestore(newWithdrawal)).catch(err =>
     console.warn('Firestore withdrawal request note:', err)
   );
 
@@ -1712,7 +1803,7 @@ export function processWithdrawal(
     };
     memoryTransactions = [tx, ...memoryTransactions];
     backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-    setDoc(doc(firestore, 'transactions', tx.id), tx).catch(err =>
+    setDoc(doc(firestore, 'transactions', tx.id), cleanForFirestore(tx)).catch(err =>
       console.warn('Firestore tx save note:', err)
     );
   } else {
@@ -1733,10 +1824,10 @@ export function processWithdrawal(
   );
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'withdrawals', withdrawalId), wth, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'withdrawals', withdrawalId), cleanForFirestore(wth), { merge: true }).catch(err =>
     console.warn('Firestore process withdrawal note:', err)
   );
-  setDoc(doc(firestore, 'wallets', wth.userId), wallet, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'wallets', wth.userId), cleanForFirestore(wallet), { merge: true }).catch(err =>
     console.warn('Firestore wallet update note:', err)
   );
 
@@ -1910,12 +2001,14 @@ export function purchaseResaleListing(
   // Update open negotiations for this listing
   memoryNegotiations.forEach(n => {
     if (n.listingId === listingId) {
-      if (n.buyerId === buyerId) {
+      if (n.buyerId === buyerId || n.status === 'aceite') {
         n.status = 'concluida';
         n.statusMessage = 'Compra concluída com sucesso!';
+        setDoc(doc(firestore, 'negotiations', n.id), cleanForFirestore(n), { merge: true }).catch(() => {});
       } else if (n.status === 'pendente' || n.status === 'contraproposta') {
         n.status = 'cancelada';
         n.statusMessage = 'Artigo adquirido por outro comprador';
+        setDoc(doc(firestore, 'negotiations', n.id), cleanForFirestore(n), { merge: true }).catch(() => {});
       }
     }
   });
@@ -2140,7 +2233,7 @@ export function createNegotiation(
   );
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'negotiations', newNeg.id), newNeg).catch(err =>
+  setDoc(doc(firestore, 'negotiations', newNeg.id), cleanForFirestore(newNeg)).catch(err =>
     console.warn('Firestore negotiation save note:', err)
   );
 
@@ -2157,27 +2250,33 @@ export function respondSellerNegotiation(
   if (idx === -1) throw new Error('Negociação não encontrada');
   const neg = memoryNegotiations[idx];
 
+  let autoText = '';
   if (action === 'aceitar') {
     neg.status = 'aceite';
     neg.lastOfferBy = 'seller';
     neg.statusMessage = 'Proposta aceite pelo vendedor';
+    autoText = `✓ Acordo aceite por ${formatMoney(neg.currentProposedPrice)}! Podes concluir o pagamento.`;
   } else if (action === 'recusar') {
     neg.status = 'recusada';
-    neg.statusMessage = 'Proposta recusada pelo vendedor';
+    neg.lastOfferBy = 'seller';
+    neg.statusMessage = 'Proposta recusada pelo vendedor (podes enviar nova proposta na conversa)';
+    autoText = `Recusei a proposta de ${formatMoney(neg.currentProposedPrice)}. Envia outra proposta na conversa para continuarmos a negociar.`;
   } else if (action === 'contraproposta' && counterPrice) {
     neg.status = 'contraproposta';
     neg.currentProposedPrice = counterPrice;
     neg.lastOfferBy = 'seller';
     neg.statusMessage = 'Contraproposta enviada pelo vendedor';
+    autoText = `Envio contraproposta de ${formatMoney(counterPrice)}. Aceitas fechar por este valor?`;
   }
 
-  if (message) {
+  const finalMsg = message?.trim() || autoText;
+  if (finalMsg) {
     neg.messages.push({
-      id: `msg_${Date.now()}`,
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
       negotiationId,
       senderId: neg.sellerId,
       senderName: neg.sellerName,
-      text: message,
+      text: finalMsg,
       timestamp: new Date().toISOString()
     });
   }
@@ -2191,19 +2290,35 @@ export function respondSellerNegotiation(
       ? 'Proposta Aceite pelo Vendedor! 🤝'
       : action === 'contraproposta'
       ? 'Contraproposta do Vendedor'
-      : 'Proposta Recusada',
+      : 'Proposta Recusada — Continua a Negociar',
     action === 'aceitar'
       ? `O vendedor aceitou a tua proposta de ${formatMoney(neg.currentProposedPrice)} por "${neg.productName}". Podes agora concluir a compra!`
       : action === 'contraproposta'
       ? `O vendedor sugeriu ${formatMoney(counterPrice || 0)} por "${neg.productName}".`
-      : `A tua proposta por "${neg.productName}" foi recusada.`,
+      : `O vendedor recusou ${formatMoney(neg.currentProposedPrice)} por "${neg.productName}". Podes responder na conversa.`,
     'negociacao',
     'negociacao',
     neg.id
   );
 
+  // Notificar também o Adm quando um vendedor responde numa negociação com persona
+  if (neg.buyerId.startsWith('persona_')) {
+    createNotification(
+      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      `${neg.sellerName} respondeu a ${neg.buyerName} 💬`,
+      action === 'aceitar'
+        ? `Acordo aceite em "${neg.productName}" por ${formatMoney(neg.currentProposedPrice)}.`
+        : action === 'contraproposta'
+        ? `Contraproposta de ${formatMoney(counterPrice || 0)} em "${neg.productName}".`
+        : `Recusou ${formatMoney(neg.currentProposedPrice)} em "${neg.productName}".`,
+      'negociacao',
+      'admin',
+      neg.id
+    );
+  }
+
   dispatchDbChange();
-  setDoc(doc(firestore, 'negotiations', negotiationId), neg, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'negotiations', negotiationId), cleanForFirestore(neg), { merge: true }).catch(err =>
     console.warn('Firestore negotiation update note:', err)
   );
 
@@ -2220,27 +2335,33 @@ export function respondBuyerNegotiation(
   if (idx === -1) throw new Error('Negociação não encontrada');
   const neg = memoryNegotiations[idx];
 
+  let autoText = '';
   if (action === 'aceitar') {
     neg.status = 'aceite';
     neg.lastOfferBy = 'buyer';
-    neg.statusMessage = 'Contraproposta aceite pelo comprador';
+    neg.statusMessage = 'Acordo aceite pelo comprador';
+    autoText = `✓ Aceito a tua proposta de ${formatMoney(neg.currentProposedPrice)}! Vamos fechar negócio.`;
   } else if (action === 'recusar') {
     neg.status = 'recusada';
-    neg.statusMessage = 'Contraproposta recusada pelo comprador';
+    neg.lastOfferBy = 'buyer';
+    neg.statusMessage = 'Proposta recusada pelo comprador';
+    autoText = `Não consigo por ${formatMoney(neg.currentProposedPrice)}. Podemos conversar sobre outro valor.`;
   } else if (action === 'contraproposta' && counterPrice) {
     neg.status = 'contraproposta';
     neg.currentProposedPrice = counterPrice;
     neg.lastOfferBy = 'buyer';
     neg.statusMessage = 'Nova proposta enviada pelo comprador';
+    autoText = `Envio nova proposta de ${formatMoney(counterPrice)}. Podemos fechar por este valor?`;
   }
 
-  if (message) {
+  const finalMsg = message?.trim() || autoText;
+  if (finalMsg) {
     neg.messages.push({
-      id: `msg_${Date.now()}`,
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
       negotiationId,
       senderId: neg.buyerId,
       senderName: neg.buyerName,
-      text: message,
+      text: finalMsg,
       timestamp: new Date().toISOString()
     });
   }
@@ -2251,18 +2372,18 @@ export function respondBuyerNegotiation(
   createNotification(
     neg.sellerId,
     action === 'aceitar'
-      ? 'Contraproposta Aceite pelo Comprador!'
+      ? 'Proposta Aceite pelo Comprador! 🤝'
       : action === 'contraproposta'
       ? 'Nova Contraproposta do Comprador'
-      : 'Proposta Recusada pelo Comprador',
-    `Atualização na negociação de "${neg.productName}".`,
+      : 'Atualização na Negociação',
+    `Atualização de ${neg.buyerName} na negociação de "${neg.productName}".`,
     'negociacao',
     'negociacao',
     neg.id
   );
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'negotiations', negotiationId), neg, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'negotiations', negotiationId), cleanForFirestore(neg), { merge: true }).catch(err =>
     console.warn('Firestore buyer negotiation note:', err)
   );
 
@@ -2280,14 +2401,18 @@ export function sendNegotiationMessage(
   if (idx === -1) throw new Error('Negociação não encontrada');
   const neg = memoryNegotiations[idx];
 
-  if (newPrice) {
+  if (newPrice && newPrice > 0) {
     neg.currentProposedPrice = newPrice;
     neg.lastOfferBy = senderId === neg.buyerId ? 'buyer' : 'seller';
     neg.status = 'contraproposta';
+    neg.statusMessage = senderId === neg.buyerId ? 'Nova proposta enviada pelo comprador' : 'Nova contraproposta do vendedor';
+  } else if (neg.status === 'recusada') {
+    neg.status = 'pendente';
+    neg.statusMessage = 'Conversa reaberta para negociação';
   }
 
   neg.messages.push({
-    id: `msg_${Date.now()}`,
+    id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
     negotiationId,
     senderId,
     senderName,
@@ -2308,8 +2433,19 @@ export function sendNegotiationMessage(
     neg.id
   );
 
+  if (senderId === neg.sellerId && neg.buyerId.startsWith('persona_')) {
+    createNotification(
+      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      `Nova mensagem de ${senderName} para ${neg.buyerName}`,
+      `"${text}"`,
+      'negociacao',
+      'admin',
+      neg.id
+    );
+  }
+
   dispatchDbChange();
-  setDoc(doc(firestore, 'negotiations', negotiationId), neg, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'negotiations', negotiationId), cleanForFirestore(neg), { merge: true }).catch(err =>
     console.warn('Firestore negotiation message note:', err)
   );
 

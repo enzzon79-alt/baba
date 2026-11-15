@@ -117,6 +117,7 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
       } else if (onQuickDeposit) {
         onQuickDeposit();
       }
+      setIsProcessing(false);
     } catch (err: any) {
       setErrorMessage(err.message || 'Erro ao processar o carregamento');
       setIsProcessing(false);
@@ -510,10 +511,10 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
                 />
               </div>
 
-              {/* Trade Assurance Instant Validation Note */}
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>Trade Assurance: Saldo validado e creditado imediatamente na tua carteira</span>
+              {/* Admin Approval Required Note */}
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-900 bg-amber-100/80 px-2.5 py-1.5 rounded-lg border border-amber-300">
+                <ShieldCheck className="w-3.5 h-3.5 text-[#FF6A00] shrink-0" />
+                <span>Aprovação do Administrador Obrigatória: O saldo só será creditado na tua carteira após aprovação do Adm.</span>
               </div>
             </div>
 
@@ -524,23 +525,23 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
               </div>
             )}
 
-            {/* Primary Action: Concluir o Depósito */}
+            {/* Primary Action: Enviar Pedido de Depósito */}
             <div className="space-y-2 pt-1 text-center">
               <button
                 type="button"
                 disabled={isProcessing}
                 onClick={handleConfirmDeposit}
-                className="w-full py-3.5 px-6 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm sm:text-base rounded-2xl shadow-xl shadow-emerald-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
+                className="w-full py-3.5 px-6 bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white font-black text-sm sm:text-base rounded-2xl shadow-xl shadow-orange-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 disabled:opacity-50"
               >
                 {isProcessing ? (
                   <>
                     <RotateCcw className="w-5 h-5 animate-spin text-white" />
-                    <span>A Concluir o Depósito...</span>
+                    <span>A Enviar Pedido de Depósito...</span>
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 className="w-5 h-5 text-emerald-200" />
-                    <span>Concluir o Depósito</span>
+                    <CheckCircle2 className="w-5 h-5 text-white" />
+                    <span>Enviar Depósito para Aprovação</span>
                     <ArrowRight className="w-5 h-5 text-white" />
                   </>
                 )}
