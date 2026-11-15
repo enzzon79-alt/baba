@@ -47,7 +47,8 @@ import {
   Layers,
   MessageCircle,
   Sparkle,
-  Trash2
+  Trash2,
+  Package
 } from 'lucide-react';
 import {
   getUsers,
@@ -70,6 +71,7 @@ import {
   formatKz,
   adjustUserBalance,
   dispatchDbChange,
+  syncUsersFromFirestore,
   DB_STATE_EVENT
 } from '../services/db';
 import { User, DepositRequest, WithdrawalRequest, ResaleListing, Negotiation } from '../types';
@@ -224,7 +226,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (onRefreshState) onRefreshState();
   };
 
+  const handleManualRefresh = () => {
+    refreshData();
+    syncUsersFromFirestore().then(synced => {
+      setUsers([...synced]);
+    });
+  };
+
   useEffect(() => {
+    syncUsersFromFirestore().then(synced => {
+      setUsers([...synced]);
+    });
     const handleDbChange = () => refreshData();
     window.addEventListener(DB_STATE_EVENT, handleDbChange);
     return () => window.removeEventListener(DB_STATE_EVENT, handleDbChange);
@@ -497,21 +509,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const pendingWithdrawalsCount = useMemo(() => withdrawals.filter(w => w.status === 'pendente').length, [withdrawals]);
   const activeUserListings = useMemo(() => resaleListings.filter(l => l.status === 'ativo'), [resaleListings]);
 
-  // Filtered lists
+  // Filtered lists (prioritiza contas em revisão mais recentes no topo)
   const filteredUsers = useMemo(() => {
-    return users.filter(u => {
-      if (kycFilter !== 'all' && u.accountStatus !== kycFilter) return false;
-      if (kycSearch.trim()) {
-        const q = kycSearch.toLowerCase();
-        const matchName = u.name.toLowerCase().includes(q);
-        const matchBi = (u.idNumber || '').toLowerCase().includes(q);
-        const matchPhone = (u.phone || '').toLowerCase().includes(q);
-        const matchEmail = (u.email || '').toLowerCase().includes(q);
-        const matchProv = (u.province || '').toLowerCase().includes(q);
-        if (!matchName && !matchBi && !matchPhone && !matchEmail && !matchProv) return false;
-      }
-      return true;
-    });
+    const statusPriority: Record<string, number> = {
+      em_processamento: 0,
+      rejeitado: 1,
+      suspenso: 2,
+      ativo: 3
+    };
+    return users
+      .filter(u => {
+        if (kycFilter !== 'all' && u.accountStatus !== kycFilter) return false;
+        if (kycSearch.trim()) {
+          const q = kycSearch.toLowerCase();
+          const matchName = u.name.toLowerCase().includes(q);
+          const matchBi = (u.idNumber || '').toLowerCase().includes(q);
+          const matchPhone = (u.phone || '').toLowerCase().includes(q);
+          const matchEmail = (u.email || '').toLowerCase().includes(q);
+          const matchProv = (u.province || '').toLowerCase().includes(q);
+          if (!matchName && !matchBi && !matchPhone && !matchEmail && !matchProv) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const pa = statusPriority[a.accountStatus] ?? 4;
+        const pb = statusPriority[b.accountStatus] ?? 4;
+        if (pa !== pb) return pa - pb;
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
   }, [users, kycFilter, kycSearch]);
 
   const filteredDeposits = useMemo(() => {
@@ -821,7 +846,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
               type="button"
-              onClick={refreshData}
+              onClick={handleManualRefresh}
               className="px-3.5 py-2.5 rounded-xl bg-[#131E3A] hover:bg-[#1a284c] border border-blue-900/50 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
               title="Atualizar dados do painel"
             >
@@ -837,6 +862,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               >
                 <ShoppingBag className="w-4 h-4 text-white" />
                 <span>Produtos dos Usuários</span>
+              </button>
+            )}
+            {onNavigateToMyProducts && (
+              <button
+                type="button"
+                onClick={onNavigateToMyProducts}
+                className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-neutral-950 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
+                title="Abrir Meus Produtos (Inventário para Revenda)"
+              >
+                <Package className="w-4 h-4 text-neutral-950" />
+                <span>Meus Produtos</span>
               </button>
             )}
           </div>
@@ -926,7 +962,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
           {/* 4. VALIDAR BILHETE */}
           <div
-            onClick={() => { setActiveTab('kyc'); setKycFilter('all'); }}
+            onClick={() => {
+              setActiveTab('kyc');
+              setKycFilter(pendingKycCount > 0 ? 'em_processamento' : 'all');
+              syncUsersFromFirestore().then(synced => setUsers([...synced]));
+            }}
             className={`p-5 rounded-2xl bg-[#131E3A] border transition-all cursor-pointer text-left ${
               activeTab === 'kyc' ? 'border-rose-500 ring-2 ring-rose-500/40 bg-rose-950/20' : 'border-blue-900/40 hover:border-rose-500/60'
             }`}
@@ -1026,7 +1066,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             {/* 4. VALIDAR BILHETE */}
             <button
               type="button"
-              onClick={() => { setActiveTab('kyc'); setKycFilter('all'); }}
+              onClick={() => {
+                setActiveTab('kyc');
+                setKycFilter(pendingKycCount > 0 ? 'em_processamento' : 'all');
+                syncUsersFromFirestore().then(synced => setUsers([...synced]));
+              }}
               className={`px-3.5 py-2.5 rounded-xl flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
                 activeTab === 'kyc'
                   ? 'bg-rose-600 text-white shadow-md shadow-rose-600/40 font-black'
@@ -1089,6 +1133,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         </div>
       </div>
+
+      {pendingKycCount > 0 && activeTab !== 'kyc' && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border-2 border-rose-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-rose-950">
+                {pendingKycCount} {pendingKycCount === 1 ? 'documento BI aguarda validação' : 'documentos BI aguardam validação'}
+              </p>
+              <p className="text-xs text-rose-800">
+                Novos utilizadores enviaram os dados e fotos do Bilhete de Identidade e estão em revisão até aceitares.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('kyc');
+              setKycFilter('em_processamento');
+              syncUsersFromFirestore().then(synced => setUsers([...synced]));
+            }}
+            className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow-sm transition-colors cursor-pointer shrink-0 flex items-center justify-center gap-1.5"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Validar Bilhetes Agora</span>
+          </button>
+        </div>
+      )}
 
 
 

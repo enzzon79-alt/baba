@@ -274,49 +274,74 @@ export function initDatabase(): void {
     err => console.warn('Products live listener notice:', err.message)
   );
 
+  const mergeFirestoreUsersSnapshot = (snapDocs: Array<{ id: string; data: () => any }>) => {
+    const users: User[] = [];
+    const seenIds = new Set<string>();
+    const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
+
+    snapDocs.forEach(d => {
+      const u = d.data() as User;
+      if (u) {
+        const uid = d.id || u.id;
+        const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+        if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
+        const localMatch = localById.get(uid);
+        seenIds.add(uid);
+        users.push({
+          ...u,
+          id: uid,
+          accountStatus: isMaster ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
+          phone: isMaster ? '+244 932 200 719' : (u.phone || localMatch?.phone || '+244 923 000 001'),
+          password: isMaster ? 'Adelina25' : (u.password || localMatch?.password),
+          idCardFront: u.idCardFront || localMatch?.idCardFront || '',
+          idCardBack: u.idCardBack || localMatch?.idCardBack || ''
+        });
+      }
+    });
+
+    // Preservar utilizadores recém-criados localmente que ainda estejam a sincronizar para o Firestore
+    memoryUsers.forEach(lu => {
+      if (
+        lu &&
+        lu.id &&
+        !seenIds.has(lu.id) &&
+        lu.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
+        !memoryDeletedUserIds.includes(lu.id)
+      ) {
+        users.unshift(lu);
+        setDoc(doc(firestore, 'users', lu.id), cleanForFirestore(lu), { merge: true }).catch(() => {});
+      }
+    });
+
+    memoryUsers = users;
+    backupToStorage(DB_KEYS.USERS, memoryUsers);
+    dispatchDbChange();
+  };
+
   void (async () => {
     await performOneTimeFirestoreAdminOnlyPurge();
 
     // 2. Subscribe to Firestore Users
     onSnapshot(
-    collection(firestore, 'users'),
-    async snap => {
-      if (snap.empty) {
-        try {
-          const batch = writeBatch(firestore);
-          INITIAL_USERS.forEach(u => {
-            const ref = doc(firestore, 'users', u.id);
-            batch.set(ref, u);
-          });
-          await batch.commit();
-        } catch (err: any) {
-          console.warn('Seeding users note:', err?.message);
-        }
-      } else {
-        const users: User[] = [];
-        const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
-        snap.forEach(d => {
-          const u = d.data() as User;
-          if (u) {
-            const uid = d.id || u.id;
-            const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
-            if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
-            const localMatch = localById.get(uid);
-            users.push({
-              ...u,
-              id: uid,
-              phone: isMaster ? '+244 932 200 719' : (u.phone || '+244 923 000 001'),
-              password: isMaster ? 'Adelina25' : (u.password || localMatch?.password)
+      collection(firestore, 'users'),
+      async snap => {
+        if (snap.empty) {
+          try {
+            const batch = writeBatch(firestore);
+            INITIAL_USERS.forEach(u => {
+              const ref = doc(firestore, 'users', u.id);
+              batch.set(ref, u);
             });
+            await batch.commit();
+          } catch (err: any) {
+            console.warn('Seeding users note:', err?.message);
           }
-        });
-        memoryUsers = users;
-        backupToStorage(DB_KEYS.USERS, memoryUsers);
-        dispatchDbChange();
-      }
-    },
-    err => console.warn('Users live listener notice:', err.message)
-  );
+        } else {
+          mergeFirestoreUsersSnapshot(snap.docs);
+        }
+      },
+      err => console.warn('Users live listener notice:', err.message)
+    );
 
   // 3. Subscribe to Firestore Wallets
   onSnapshot(
@@ -538,6 +563,66 @@ export function getUsers(): User[] {
   return Array.from(map.values());
 }
 
+export function getUserInviteCode(user?: Pick<User, 'id' | 'name'> | null): string {
+  if (!user) return 'BABA-AMIGO94';
+  const firstName = (user.name || 'AMIGO').trim().split(/\s+/)[0].replace(/[^A-Za-z0-9]/g, '').toUpperCase() || 'AMIGO';
+  const suffix = (user.id || '94').replace(/[^A-Za-z0-9]/g, '').slice(-3).toUpperCase() || '94';
+  return `BABA-${firstName}${suffix}`;
+}
+
+export async function syncUsersFromFirestore(): Promise<User[]> {
+  try {
+    const snap = await Promise.race([
+      getDocs(collection(firestore, 'users')),
+      new Promise<null>(res => setTimeout(() => res(null), 3000))
+    ]);
+    if (snap && !snap.empty) {
+      const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
+      const merged: User[] = [];
+      const seenIds = new Set<string>();
+
+      snap.forEach(d => {
+        const u = d.data() as User;
+        if (!u) return;
+        const uid = d.id || u.id;
+        const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+        if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
+        const localMatch = localById.get(uid);
+        seenIds.add(uid);
+        merged.push({
+          ...u,
+          id: uid,
+          accountStatus: isMaster ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
+          phone: isMaster ? '+244 932 200 719' : (u.phone || localMatch?.phone || '+244 923 000 001'),
+          password: isMaster ? 'Adelina25' : (u.password || localMatch?.password),
+          idCardFront: u.idCardFront || localMatch?.idCardFront || '',
+          idCardBack: u.idCardBack || localMatch?.idCardBack || ''
+        });
+      });
+
+      memoryUsers.forEach(lu => {
+        if (
+          lu &&
+          lu.id &&
+          !seenIds.has(lu.id) &&
+          lu.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
+          !memoryDeletedUserIds.includes(lu.id)
+        ) {
+          merged.unshift(lu);
+          setDoc(doc(firestore, 'users', lu.id), cleanForFirestore(lu), { merge: true }).catch(() => {});
+        }
+      });
+
+      memoryUsers = merged;
+      backupToStorage(DB_KEYS.USERS, memoryUsers);
+      dispatchDbChange();
+    }
+  } catch (err) {
+    console.warn('syncUsersFromFirestore notice:', err);
+  }
+  return getUsers();
+}
+
 export function getCurrentUser(): User | null {
   if (typeof window === 'undefined') return null;
   const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
@@ -628,7 +713,8 @@ export async function registerUser(
   idNumberOrBirthDate?: string,
   birthDateOrIdCardFront?: string,
   idCardFrontOrBack?: string,
-  idCardBack?: string
+  idCardBack?: string,
+  referredByCode?: string
 ): Promise<User> {
   let password = 'BABA2026!';
   let province = 'Luanda';
@@ -637,9 +723,10 @@ export async function registerUser(
   let birthDate = '1998-05-15';
   let docFront = '';
   let docBack = '';
+  const cleanReferredBy = (referredByCode || '').trim().toUpperCase();
 
   if (idCardBack !== undefined) {
-    // 10 arguments passed: name, email, phone, password, province, city, idNumber, birthDate, front, back
+    // 10+ arguments passed: name, email, phone, password, province, city, idNumber, birthDate, front, back, referredBy
     password = passwordOrProvince || 'BABA2026!';
     province = provinceOrCity || 'Luanda';
     city = cityOrIdNumber || 'Luanda';
@@ -701,9 +788,14 @@ export async function registerUser(
   }
 
   const userId = authUid || `usr_${Date.now()}`;
+  if (memoryDeletedUserIds.includes(userId)) {
+    memoryDeletedUserIds = memoryDeletedUserIds.filter(id => id !== userId);
+    backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
+  }
+
   const newUser: User = {
     id: userId,
-    name,
+    name: name.trim(),
     email: email.trim(),
     phone: phone.trim(),
     password: password,
@@ -715,6 +807,7 @@ export async function registerUser(
     birthDate,
     idCardFront: docFront,
     idCardBack: docBack,
+    ...(cleanReferredBy ? { referredBy: cleanReferredBy, referralRewardPaid: false } : {}),
     createdAt: new Date().toISOString()
   };
 
@@ -739,7 +832,7 @@ export async function registerUser(
   const welcomeTx: Transaction = {
     id: `tx_welcome_${Date.now()}`,
     userId: userId,
-    userName: name,
+    userName: name.trim(),
     amount: 500,
     type: 'carregamento',
     description: 'Bónus de Boas-Vindas BABA SHOPPING (Saldo Inicial)',
@@ -750,14 +843,21 @@ export async function registerUser(
   memoryTransactions = [welcomeTx, ...memoryTransactions];
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
-  // Não autenticar automaticamente — a conta fica pendente até o Administrador validar o BI e aceitar
+  // Não autenticar automaticamente — a conta fica em revisão até o Administrador validar o BI e aceitar
   try {
     await signOut(auth);
   } catch {
     // safe ignore
   }
+  if (typeof window !== 'undefined') {
+    const activeId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
+    if (activeId === userId) {
+      localStorage.removeItem(DB_KEYS.CURRENT_USER_ID);
+      localStorage.removeItem('baba_current_user_obj');
+    }
+  }
 
-  // Create pending review notification
+  // Create pending review notification for the new user
   createNotification(
     userId,
     'Conta em Revisão pelo Administrador 📋',
@@ -766,11 +866,25 @@ export async function registerUser(
     'carteira'
   );
 
-  // 2. Direct AWAIT write to Cloud Firestore
+  // Notificar imediatamente o Administrador sobre novo documento BI para validar
+  createNotification(
+    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    'Novo Documento BI para Validar 📋',
+    `${newUser.name} (${newUser.phone}) submeteu o BI ${newUser.idNumber} (${newUser.province}) e aguarda validação no Painel Adm.`,
+    'sistema',
+    'admin'
+  );
+
+  // 2. Direct AWAIT write to Cloud Firestore (com timeout de segurança)
   try {
-    await setDoc(doc(firestore, 'users', userId), cleanForFirestore(newUser), { merge: true });
-    await setDoc(doc(firestore, 'wallets', userId), cleanForFirestore(newWallet), { merge: true });
-    await setDoc(doc(firestore, 'transactions', welcomeTx.id), cleanForFirestore(welcomeTx), { merge: true });
+    await Promise.race([
+      Promise.all([
+        setDoc(doc(firestore, 'users', userId), cleanForFirestore(newUser), { merge: true }),
+        setDoc(doc(firestore, 'wallets', userId), cleanForFirestore(newWallet), { merge: true }),
+        setDoc(doc(firestore, 'transactions', welcomeTx.id), cleanForFirestore(welcomeTx), { merge: true })
+      ]),
+      new Promise<void>(res => setTimeout(res, 4000))
+    ]);
     console.log('User and wallet saved to Firestore successfully for UID:', userId);
   } catch (fsErr) {
     console.warn('Firestore write note:', fsErr);
@@ -856,17 +970,22 @@ export async function loginUser(identifier: string, password?: string): Promise<
     return false;
   });
 
-  // 3. Se não encontrado localmente, verificar no Firestore por ID direto ou autenticação Firebase
+  // 3. Se não encontrado localmente, sincronizar Firestore e procurar por telefone, email, BI ou ID
   if (!matched && !memoryDeletedUserIds.includes(rawId)) {
     try {
-      const directDoc = await Promise.race([
-        getDoc(doc(firestore, 'users', rawId)).catch(() => null),
-        new Promise<null>(res => setTimeout(() => res(null), 1200))
-      ]);
-      if (directDoc && directDoc.exists() && !memoryDeletedUserIds.includes(directDoc.id)) {
-        const raw = directDoc.data();
-        matched = { id: directDoc.id, ...raw, phone: raw?.phone || '+244 923 000 001' } as User;
-      }
+      const syncedUsers = await syncUsersFromFirestore();
+      matched = syncedUsers.find(u => {
+        if (!u) return false;
+        const uEmail = safeStr(u.email).toLowerCase();
+        const uId = safeStr(u.id);
+        const uIdNum = safeStr(u.idNumber).toLowerCase();
+        const uPhoneNorm = normPhone(cleanDigits(u.phone));
+        if (uEmail && uEmail === term) return true;
+        if (uId && (uId === rawId || uId.toLowerCase() === strippedTerm)) return true;
+        if (uIdNum && uIdNum === term) return true;
+        if (searchPhoneNorm.length >= 9 && uPhoneNorm && uPhoneNorm === searchPhoneNorm) return true;
+        return false;
+      });
     } catch {}
   }
 
@@ -994,10 +1113,55 @@ export function approveKYC(userId: string): User {
   const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
   if (!baseUser) throw new Error('Utilizador não encontrado');
 
+  let referralRewardPaid = !!baseUser.referralRewardPaid;
+  if (baseUser.referredBy && !referralRewardPaid) {
+    const refNorm = baseUser.referredBy.trim().toUpperCase();
+    const inviter = getUsers().find(
+      u =>
+        u &&
+        u.id !== userId &&
+        (getUserInviteCode(u).toUpperCase() === refNorm || u.id.toUpperCase() === refNorm)
+    );
+    if (inviter) {
+      const inviterWallet = getWallet(inviter.id);
+      inviterWallet.availableBalance += 1000;
+      inviterWallet.totalDeposited += 1000;
+      memoryWallets[inviter.id] = inviterWallet;
+      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+
+      const bonusTx: Transaction = {
+        id: `tx_ref_${Date.now()}_${userId.slice(-4)}`,
+        userId: inviter.id,
+        userName: inviter.name,
+        amount: 1000,
+        type: 'carregamento',
+        description: `Bónus de Convite Validado: ${baseUser.name}`,
+        status: 'confirmada',
+        reference: `REF-${userId.slice(-5).toUpperCase()}`,
+        createdAt: new Date().toISOString()
+      };
+      memoryTransactions = [bonusTx, ...memoryTransactions];
+      backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
+      createNotification(
+        inviter.id,
+        'Ganhaste +1.000 Kz de Bónus de Convite! 🎉',
+        `O teu amigo ${baseUser.name} teve o BI validado pelo Administrador. 1.000,00 Kz foram creditados na tua carteira.`,
+        'sistema',
+        'carteira'
+      );
+
+      setDoc(doc(firestore, 'wallets', inviter.id), cleanForFirestore(inviterWallet), { merge: true }).catch(() => {});
+      setDoc(doc(firestore, 'transactions', bonusTx.id), cleanForFirestore(bonusTx), { merge: true }).catch(() => {});
+      referralRewardPaid = true;
+    }
+  }
+
   const updated: User = {
     ...baseUser,
     accountStatus: 'ativo',
     rejectionReason: '',
+    referralRewardPaid,
     verifiedAt: new Date().toISOString()
   };
   if (idx !== -1) {
@@ -1058,7 +1222,8 @@ export function rejectKYC(userId: string, reason: string): User {
 export function resubmitKYCDocuments(
   userId: string,
   idCardFront: string,
-  idCardBack: string
+  idCardBack: string,
+  idNumber?: string
 ): User {
   const idx = memoryUsers.findIndex(u => u && u.id === userId);
   const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
@@ -1066,6 +1231,7 @@ export function resubmitKYCDocuments(
 
   const updated: User = {
     ...baseUser,
+    ...(idNumber && idNumber.trim() ? { idNumber: idNumber.trim().toUpperCase() } : {}),
     idCardFront,
     idCardBack,
     rejectionReason: '',
@@ -1077,6 +1243,20 @@ export function resubmitKYCDocuments(
     memoryUsers = [updated, ...memoryUsers];
   }
   backupToStorage(DB_KEYS.USERS, memoryUsers);
+
+  if (typeof window !== 'undefined' && localStorage.getItem(DB_KEYS.CURRENT_USER_ID) === userId) {
+    try {
+      localStorage.setItem('baba_current_user_obj', JSON.stringify(updated));
+    } catch {}
+  }
+
+  createNotification(
+    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    'Documento BI Reenviado para Validação 📋',
+    `${updated.name} reenviou as fotografias do BI ${updated.idNumber} para nova análise no Painel Adm.`,
+    'sistema',
+    'admin'
+  );
 
   dispatchDbChange();
   setDoc(doc(firestore, 'users', userId), cleanForFirestore(updated), { merge: true }).catch(err =>
@@ -2150,7 +2330,7 @@ export function createNotification(
   title: string,
   message: string,
   type: 'venda' | 'compra' | 'negociacao' | 'sistema',
-  linkType?: 'produto' | 'negociacao' | 'carteira',
+  linkType?: 'produto' | 'negociacao' | 'carteira' | 'admin',
   linkId?: string
 ): Notification {
   const newNotif: Notification = {

@@ -24,7 +24,8 @@ import {
   Package,
   Layers,
   Award,
-  RefreshCw
+  RefreshCw,
+  Gift
 } from 'lucide-react';
 import { User as UserType } from '../types';
 import {
@@ -32,6 +33,7 @@ import {
   loginUser,
   formatKz
 } from '../services/db';
+import { compressImageToDataUrl } from '../utils/image';
 
 interface AuthPageProps {
   onLoginSuccess: (user: UserType) => void;
@@ -92,10 +94,25 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [regError, setRegError] = useState<string | null>(null);
 
   // Form State - Verificação do Bilhete de Identidade (BI)
-  const [regIdNumber, setRegIdNumber] = useState('009847123LA042');
+  const [regIdNumber, setRegIdNumber] = useState('');
   const [frontDoc, setFrontDoc] = useState('');
   const [backDoc, setBackDoc] = useState('');
   const [biError, setBiError] = useState<string | null>(null);
+  const [isCompressingDoc, setIsCompressingDoc] = useState<'front' | 'back' | null>(null);
+  const [regReferralCode, setRegReferralCode] = useState<string>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const refParam = (params.get('ref') || '').trim().toUpperCase();
+        if (refParam) {
+          localStorage.setItem('baba_ref_code', refParam);
+          return refParam;
+        }
+        return (localStorage.getItem('baba_ref_code') || '').trim().toUpperCase();
+      }
+    } catch {}
+    return '';
+  });
 
   // Processed registered user state
   const [registeredUser, setRegisteredUser] = useState<UserType | null>(null);
@@ -130,23 +147,24 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     }
   }, [step]);
 
-  // Upload de ficheiros de imagem do BI
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, side: 'front' | 'back') => {
+  // Upload de ficheiros de imagem do BI com compressão automática (< 150KB) para garantir envio ao Painel Adm
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, side: 'front' | 'back') => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 8 * 1024 * 1024) {
-        setBiError('A imagem deve ter no máximo 8MB.');
-        return;
-      }
-      setBiError(null);
-      const reader = new FileReader();
-      reader.onload = ev => {
-        if (typeof ev.target?.result === 'string') {
-          if (side === 'front') setFrontDoc(ev.target.result);
-          else setBackDoc(ev.target.result);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      setBiError('A imagem deve ter no máximo 15MB.');
+      return;
+    }
+    setBiError(null);
+    setIsCompressingDoc(side);
+    try {
+      const compactDataUrl = await compressImageToDataUrl(file);
+      if (side === 'front') setFrontDoc(compactDataUrl);
+      else setBackDoc(compactDataUrl);
+    } catch (err: any) {
+      setBiError(err?.message || 'Não foi possível processar a fotografia do BI.');
+    } finally {
+      setIsCompressingDoc(null);
     }
   };
 
@@ -205,12 +223,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       return;
     }
 
-    const front = frontDoc || DEMO_BI_FRONT;
-    const back = backDoc || DEMO_BI_BACK;
+    if (!frontDoc || !backDoc) {
+      setBiError('Por favor carrega ambas as fotografias do Bilhete de Identidade (Frente e Verso) antes de enviar.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
-      // Regista o utilizador no Firebase e na base de dados com estado de análise
+      // Regista o utilizador no Firebase e na base de dados com estado em_processamento (em revisão)
       const newUser = await registerUser(
         regName.trim(),
         regEmail.trim(),
@@ -220,13 +240,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         regCity.trim() || regProvince,
         idNum,
         '1997-04-12',
-        front,
-        back
+        frontDoc,
+        backDoc,
+        regReferralCode.trim().toUpperCase() || undefined
       );
 
-      // Marca o estado como pendente de aprovação até o Administrador validar e aceitar
+      // Marca o estado como em processo / revisão até o Administrador validar e aceitar
       newUser.accountStatus = 'em_processamento';
       setRegisteredUser(newUser);
+      try {
+        localStorage.removeItem('baba_ref_code');
+      } catch {}
 
       // Avança para: Aguardar aprovação pelo Administrador
       setStep('waiting_approval');
@@ -609,6 +633,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 </div>
               </div>
 
+              {/* Código de Convite (Opcional) */}
+              <div>
+                <label className="text-xs font-bold text-neutral-800 block mb-1">
+                  Código de Convite de Amigo (Opcional):
+                </label>
+                <div className="relative">
+                  <Gift className="w-4 h-4 text-[#FF6A00] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={regReferralCode}
+                    onChange={e => setRegReferralCode(e.target.value.toUpperCase())}
+                    placeholder="Ex: BABA-JOAO123 (se foste convidado)"
+                    className="w-full pl-10 pr-3.5 py-2.5 bg-amber-50/40 border border-amber-200 rounded-xl text-xs sm:text-sm text-neutral-900 font-mono uppercase focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
+                  />
+                </div>
+              </div>
+
               {/* Botão Clicar em Concluir */}
               <div className="pt-3">
                 <button
@@ -785,7 +826,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         />
                         <Upload className="w-6 h-6 mb-1 text-neutral-400" />
                         <span className="text-xs font-black text-neutral-800 block">
-                          Carregar Foto Frente
+                          {isCompressingDoc === 'front' ? 'A processar foto...' : 'Carregar Foto Frente'}
                         </span>
                         <span className="text-[10px] text-neutral-400 block mt-0.5">
                           Tirar foto ou escolher ficheiro
@@ -830,7 +871,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         />
                         <Upload className="w-6 h-6 mb-1 text-neutral-400" />
                         <span className="text-xs font-black text-neutral-800 block">
-                          Carregar Foto Verso
+                          {isCompressingDoc === 'back' ? 'A processar foto...' : 'Carregar Foto Verso'}
                         </span>
                         <span className="text-[10px] text-neutral-400 block mt-0.5">
                           Tirar foto ou escolher ficheiro
@@ -845,11 +886,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isCompressingDoc !== null}
                   className="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-base rounded-2xl shadow-xl shadow-emerald-600/25 transition-all flex items-center justify-center gap-2.5 cursor-pointer active:scale-98 disabled:opacity-50"
                 >
                   <ShieldCheck className="w-5 h-5" />
-                  <span>{isSubmitting ? 'A enviar documentos...' : 'Enviar para Verificação'}</span>
+                  <span>{isSubmitting ? 'A enviar documentos para o Adm...' : 'Enviar para Verificação'}</span>
                   <ArrowRight className="w-5 h-5" />
                 </button>
               </div>

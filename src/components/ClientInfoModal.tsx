@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { User as UserType } from '../types';
 import { formatKz } from '../services/db';
+import { copyTextToClipboard } from '../utils/image';
 
 interface ClientInfoModalProps {
   isOpen: boolean;
@@ -47,10 +48,12 @@ export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
 
   if (!isOpen || !currentUser) return null;
 
-  const handleCopyId = () => {
-    navigator.clipboard?.writeText(currentUser.idNumber);
-    setCopiedId(true);
-    setTimeout(() => setCopiedId(false), 2000);
+  const handleCopyId = async () => {
+    const ok = await copyTextToClipboard(currentUser.idNumber);
+    if (ok) {
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    }
   };
 
   const handleLogoutClick = () => {

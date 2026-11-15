@@ -17,6 +17,8 @@ export interface User {
   idCardBack?: string;
   rejectionReason?: string;
   suspensionReason?: string;
+  referredBy?: string;
+  referralRewardPaid?: boolean;
   verifiedAt?: string;
   createdAt: string;
 }
@@ -257,7 +259,7 @@ export interface Notification {
   message: string;
   type: 'venda' | 'compra' | 'negociacao' | 'sistema';
   read: boolean;
-  linkType?: 'produto' | 'negociacao' | 'carteira';
+  linkType?: 'produto' | 'negociacao' | 'carteira' | 'admin';
   linkId?: string;
   createdAt: string;
 }
