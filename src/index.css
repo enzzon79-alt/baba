@@ -1,10 +1,68 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --color-neutral-50: #f5f4ff;
+  --color-neutral-100: #eceaf9;
+  --color-neutral-200: #dcd8f2;
+  --color-neutral-300: #c2bce6;
+  --color-neutral-400: #757ba0;
+  --color-neutral-500: #555b82;
+  --color-neutral-600: #3e4369;
+  --color-neutral-700: #2b2f52;
+  --color-neutral-800: #1b1938;
+  --color-neutral-900: #13102b;
+  --color-neutral-950: #0a081c;
+
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef0b8;
+  --color-amber-200: #fde073;
+  --color-amber-300: #ffcc33;
+  --color-amber-400: #ffb700;
+  --color-amber-500: #f59700;
+  --color-amber-600: #d96b00;
+  --color-amber-700: #b44d00;
+  --color-amber-800: #8f3b06;
+  --color-amber-900: #75300b;
+  --color-amber-950: #451803;
+
+  --color-orange-50: #fff2ec;
+  --color-orange-100: #ffe1d1;
+  --color-orange-200: #ffc0a3;
+  --color-orange-300: #ff9468;
+  --color-orange-400: #ff6430;
+  --color-orange-500: #ff4500;
+  --color-orange-600: #e62e00;
+  --color-orange-700: #bf2200;
+  --color-orange-800: #991d06;
+  --color-orange-900: #7c1c0b;
+  --color-orange-950: #430a02;
+}
+
 @layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    color: #171717;
-    background-color: #FAFAFB;
+    font-family: var(--font-sans);
+    color: #13102b;
+    background: linear-gradient(135deg, #f4f1ff 0%, #fff7f0 52%, #eef3ff 100%);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
   }
 }
 
@@ -28,12 +86,20 @@
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #eceaf9;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: #b8b2de;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: #757ba0;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }

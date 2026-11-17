@@ -10,11 +10,11 @@ import {
   FileText,
   Check,
   ShieldCheck,
-  Building2,
-  Phone,
+  Copy,
   RotateCcw
 } from 'lucide-react';
 import { formatKz } from '../services/db';
+import { compressImageToDataUrl, copyTextToClipboard } from '../utils/image';
 
 export interface PurchaseNotice {
   type: 'insufficient_funds' | 'success' | 'deposit_success';
@@ -57,24 +57,29 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
   const [step, setStep] = useState<'notice' | 'deposit'>('notice');
 
   // Deposit form state
-  const [customAmount, setCustomAmount] = useState<number>(missingAmount > 0 ? missingAmount : 5000);
-  const [paymentMethod, setPaymentMethod] = useState<'multicaixa_express' | 'transferencia' | 'referencia'>('multicaixa_express');
-  const [phone, setPhone] = useState(currentUser?.phone || '+244 923 000 000');
+  const [customAmount, setCustomAmount] = useState<number>(0);
+  const [paymentMethod, setPaymentMethod] = useState<'multicaixa_express' | 'paypay'>('multicaixa_express');
   const [receiptProof, setReceiptProof] = useState<string | null>(null);
   const [receiptProofName, setReceiptProofName] = useState<string>('');
-  const [transactionCode, setTransactionCode] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<'xpress' | 'ent' | 'ref' | null>(null);
+
+  const handleCopyField = async (value: string, key: 'xpress' | 'ent' | 'ref') => {
+    const ok = await copyTextToClipboard(value);
+    if (ok) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    }
+  };
 
   // Reset when notice changes
   useEffect(() => {
     if (notice && notice.type === 'insufficient_funds') {
-      const missing = Math.max(0, notice.price - notice.availableBalance);
-      setCustomAmount(missing > 0 ? missing : 5000);
+      setCustomAmount(0);
       setStep('notice');
       setReceiptProof(null);
       setReceiptProofName('');
-      setTransactionCode('');
       setErrorMessage(null);
     }
   }, [notice]);
@@ -88,32 +93,56 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
         return;
       }
       setReceiptProofName(file.name);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setReceiptProof(reader.result);
-          setErrorMessage(null);
-        }
-      };
-      reader.readAsDataURL(file);
+      if (file.type && file.type.startsWith('image/')) {
+        compressImageToDataUrl(file)
+          .then(compressed => {
+            setReceiptProof(compressed);
+            setErrorMessage(null);
+          })
+          .catch(() => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              if (typeof reader.result === 'string') {
+                setReceiptProof(reader.result);
+                setErrorMessage(null);
+              }
+            };
+            reader.readAsDataURL(file);
+          });
+      } else {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            setReceiptProof(reader.result);
+            setErrorMessage(null);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
   // Submit deposit: conclui apenas o carregamento
   const handleConfirmDeposit = () => {
     setErrorMessage(null);
-    const amountToUse = customAmount > 0 ? customAmount : missingAmount;
-    if (amountToUse <= 0) {
-      setErrorMessage('Por favor insere um montante válido para carregar.');
+    if (!customAmount || customAmount <= 0 || isNaN(customAmount)) {
+      setErrorMessage('Por favor, seleciona ou introduz o valor que desejas depositar.');
+      return;
+    }
+    if (!receiptProof) {
+      setErrorMessage('Por favor, carrega o comprovativo de pagamento no espaço acima antes de enviar.');
       return;
     }
 
-    const ref = transactionCode.trim() || `MCX-${Date.now().toString().slice(-6)}`;
+    const ref =
+      paymentMethod === 'paypay'
+        ? `PAYPAY-10116-935723248-${Date.now().toString().slice(-4)}`
+        : `XPRESS-933191188-${Date.now().toString().slice(-4)}`;
 
     setIsProcessing(true);
     try {
       if (onDepositAndBuy) {
-        onDepositAndBuy(amountToUse, paymentMethod, ref, receiptProof || undefined);
+        onDepositAndBuy(customAmount, paymentMethod, ref, receiptProof);
       } else if (onQuickDeposit) {
         onQuickDeposit();
       }
@@ -219,11 +248,44 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 font-black text-xs sm:text-sm text-neutral-900">
                   <Sparkles className="w-4 h-4 text-[#FF6A00]" />
-                  <span>Montante que pretendes carregar</span>
+                  <span>Seleciona o valor do depósito</span>
                 </div>
-                <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-md">
-                  Personalizado
-                </span>
+                {customAmount > 0 && (
+                  <span className="text-xs font-black text-[#FF4500] tabular-nums">
+                    {formatKz(customAmount)}
+                  </span>
+                )}
+              </div>
+
+              {/* Quick Pills */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {missingAmount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomAmount(missingAmount)}
+                    className={`col-span-2 sm:col-span-3 py-2 px-2.5 text-xs font-extrabold rounded-xl border transition-all cursor-pointer tabular-nums ${
+                      customAmount === missingAmount
+                        ? 'bg-gradient-to-r from-[#FF6A00] to-[#FF4500] text-white border-[#FF4500] shadow-md'
+                        : 'bg-white text-neutral-800 border-amber-300 hover:border-[#FF6A00]'
+                    }`}
+                  >
+                    Falta exata ({formatKz(missingAmount)})
+                  </button>
+                )}
+                {[500, 1000, 5000, 10000, 25000, 50000].map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setCustomAmount(val)}
+                    className={`py-2 px-2 text-xs font-extrabold rounded-xl border transition-all cursor-pointer tabular-nums ${
+                      customAmount === val
+                        ? 'bg-neutral-900 text-amber-400 border-neutral-900 shadow-xs'
+                        : 'bg-white text-neutral-800 border-neutral-200 hover:border-neutral-400'
+                    }`}
+                  >
+                    {formatKz(val)}
+                  </button>
+                ))}
               </div>
 
               <div>
@@ -232,49 +294,15 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
                     type="number"
                     value={customAmount || ''}
                     onChange={e => setCustomAmount(Math.max(0, Number(e.target.value)))}
-                    placeholder="Digita qualquer valor (ex: 5000, 15000, 50000)"
-                    min={500}
-                    step={500}
-                    className="w-full py-2.5 px-3 bg-white border-2 border-neutral-300 focus:border-[#FF6A00] rounded-xl text-base font-black text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-[#FF6A00]/20"
+                    placeholder="Ou digita outro valor (ex: 15.000)"
+                    min={1}
+                    step="any"
+                    className="w-full py-2.5 px-3 bg-white border-2 border-neutral-300 focus:border-[#FF6A00] rounded-xl text-sm font-black text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-[#FF6A00]/20"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-bold text-neutral-400">
                     Kz
                   </span>
                 </div>
-                <p className="text-[10px] text-neutral-500 mt-1">
-                  Podes carregar qualquer valor que quiseres. Mínimo: 500 Kz.
-                </p>
-              </div>
-
-              {/* Quick Pills */}
-              <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {missingAmount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setCustomAmount(missingAmount)}
-                    className={`px-2 py-1 text-[11px] font-bold rounded-lg border transition-all cursor-pointer ${
-                      customAmount === missingAmount
-                        ? 'bg-[#FF6A00] text-white border-[#FF6A00] shadow-xs'
-                        : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-400'
-                    }`}
-                  >
-                    Falta exata ({formatKz(missingAmount)})
-                  </button>
-                )}
-                {[5000, 10000, 25000, 50000, 100000].map(val => (
-                  <button
-                    key={val}
-                    type="button"
-                    onClick={() => setCustomAmount(val)}
-                    className={`px-2 py-1 text-[11px] font-bold rounded-lg border transition-all cursor-pointer ${
-                      customAmount === val
-                        ? 'bg-neutral-900 text-amber-400 border-neutral-900 shadow-xs'
-                        : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-400'
-                    }`}
-                  >
-                    +{formatKz(val)}
-                  </button>
-                ))}
               </div>
             </div>
 
@@ -313,28 +341,74 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
                 <span>Carregamento da Plataforma</span>
               </div>
               <h3 className="text-lg sm:text-xl font-black text-neutral-900">
-                Fazer Depósito de {formatKz(customAmount || missingAmount)}
+                {customAmount > 0 ? `Fazer Depósito de ${formatKz(customAmount)}` : 'Seleciona o Valor do Depósito'}
               </h3>
               <p className="text-[11px] text-neutral-500">
-                Escolhe o método de pagamento e anexa o comprovativo na faixa abaixo para concluir.
+                Seleciona o montante, escolhe o método de pagamento e carrega o comprovativo abaixo.
               </p>
             </div>
 
-            {/* Editable Amount */}
-            <div>
-              <label className="text-[11px] font-bold text-neutral-700 block mb-1">
-                Montante a Depositar (Kz):
-              </label>
+            {/* Selectable Amount */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black text-neutral-900">
+                  1. Seleciona o valor do depósito (Kz):
+                </label>
+                {customAmount > 0 && (
+                  <span className="text-xs font-black text-[#FF4500] tabular-nums">
+                    {formatKz(customAmount)}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {missingAmount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomAmount(missingAmount);
+                      setErrorMessage(null);
+                    }}
+                    className={`col-span-2 sm:col-span-4 py-2 px-2.5 text-xs font-extrabold rounded-xl border transition-all cursor-pointer tabular-nums ${
+                      customAmount === missingAmount
+                        ? 'bg-gradient-to-r from-[#FF6A00] to-[#FF4500] text-white border-[#FF4500] shadow-md'
+                        : 'bg-amber-50 text-neutral-900 border-amber-300 hover:border-[#FF6A00]'
+                    }`}
+                  >
+                    Falta exata ({formatKz(missingAmount)})
+                  </button>
+                )}
+                {[500, 1000, 2500, 5000, 10000, 25000, 50000, 100000].map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => {
+                      setCustomAmount(val);
+                      setErrorMessage(null);
+                    }}
+                    className={`py-2 px-2 text-xs font-extrabold rounded-xl border transition-all cursor-pointer tabular-nums ${
+                      customAmount === val
+                        ? 'bg-gradient-to-r from-[#FF6A00] to-[#FF4500] text-white border-[#FF4500] shadow-md'
+                        : 'bg-neutral-50 hover:bg-neutral-100 text-neutral-800 border-neutral-200'
+                    }`}
+                  >
+                    {formatKz(val)}
+                  </button>
+                ))}
+              </div>
               <div className="relative">
                 <input
                   type="number"
                   value={customAmount || ''}
-                  onChange={e => setCustomAmount(Math.max(0, Number(e.target.value)))}
-                  min={500}
-                  step={500}
-                  className="w-full py-2 px-3 bg-neutral-50 border border-neutral-300 rounded-xl text-base font-black text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-[#FF6A00]/20"
+                  onChange={e => {
+                    setCustomAmount(Math.max(0, Number(e.target.value)));
+                    setErrorMessage(null);
+                  }}
+                  min={1}
+                  step="any"
+                  placeholder="Ou digita outro valor (ex: 15.000)"
+                  className="w-full py-2 px-3 pr-10 bg-neutral-50 border border-neutral-300 rounded-xl text-sm font-black text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-[#FF6A00]/20"
                 />
-                <span className="absolute right-3 top-2 text-xs font-bold text-neutral-400">
+                <span className="absolute right-3 top-2.5 text-xs font-bold text-neutral-400">
                   Kz
                 </span>
               </div>
@@ -343,151 +417,187 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
             {/* Payment Method Selector */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-neutral-700 block">
-                Método de Pagamento em Angola:
+                Método de Recarga Oficial (Angola):
               </label>
-              <div className="grid grid-cols-3 gap-1.5 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('multicaixa_express')}
-                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
+                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
                     paymentMethod === 'multicaixa_express'
-                      ? 'border-[#FF6A00] bg-orange-50 font-black text-[#FF6A00] ring-1 ring-[#FF6A00]'
-                      : 'border-neutral-200 bg-neutral-50 font-semibold text-neutral-700 hover:bg-neutral-100'
+                      ? 'border-[#FF6A00] bg-orange-50 text-neutral-900 ring-2 ring-[#FF6A00]/40 shadow-xs'
+                      : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100'
                   }`}
                 >
-                  <Phone className="w-3.5 h-3.5 mx-auto mb-1 text-orange-500" />
-                  <span className="text-[10px] sm:text-xs block leading-tight">Multicaixa Express</span>
+                  <img
+                    src="/assets/aistudio/IMG_4106_b00dac5c.jpeg"
+                    alt="Multicaixa Express"
+                    className="w-11 h-8 rounded-lg object-cover border border-orange-200 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <span className="text-xs font-black block leading-tight truncate">Multicaixa Express</span>
+                    <span className="text-[10px] font-mono font-bold text-[#FF6A00] block truncate">933 191 188</span>
+                  </div>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('transferencia')}
-                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
-                    paymentMethod === 'transferencia'
-                      ? 'border-[#FF6A00] bg-orange-50 font-black text-[#FF6A00] ring-1 ring-[#FF6A00]'
-                      : 'border-neutral-200 bg-neutral-50 font-semibold text-neutral-700 hover:bg-neutral-100'
+                  onClick={() => setPaymentMethod('paypay')}
+                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                    paymentMethod === 'paypay'
+                      ? 'border-indigo-600 bg-indigo-50 text-neutral-900 ring-2 ring-indigo-500/40 shadow-xs'
+                      : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:bg-neutral-100'
                   }`}
                 >
-                  <Building2 className="w-3.5 h-3.5 mx-auto mb-1 text-blue-600" />
-                  <span className="text-[10px] sm:text-xs block leading-tight">Transf. Bancária</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('referencia')}
-                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
-                    paymentMethod === 'referencia'
-                      ? 'border-[#FF6A00] bg-orange-50 font-black text-[#FF6A00] ring-1 ring-[#FF6A00]'
-                      : 'border-neutral-200 bg-neutral-50 font-semibold text-neutral-700 hover:bg-neutral-100'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5 mx-auto mb-1 text-emerald-600" />
-                  <span className="text-[10px] sm:text-xs block leading-tight">Por Referência</span>
+                  <img
+                    src="/assets/aistudio/IMG_1417_a64da3e1.jpeg"
+                    alt="PayPay"
+                    className="w-9 h-9 rounded-lg object-cover border border-indigo-200 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <span className="text-xs font-black block leading-tight truncate">PayPay</span>
+                    <span className="text-[10px] font-mono font-bold text-indigo-700 block truncate">Ent: 10116</span>
+                  </div>
                 </button>
               </div>
             </div>
 
             {/* Method Details Box */}
             {paymentMethod === 'multicaixa_express' && (
-              <div className="p-2.5 rounded-xl bg-orange-50/70 border border-orange-200 text-xs space-y-1.5">
-                <label className="text-[10px] font-bold text-neutral-700 block">
-                  Telemóvel Multicaixa Express (+244):
-                </label>
-                <input
-                  type="text"
-                  value={phone}
-                  onChange={e => setPhone(e.target.value)}
-                  placeholder="+244 9xx xxx xxx"
-                  className="w-full py-1.5 px-2.5 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 focus:outline-none focus:ring-1 focus:ring-orange-400"
-                />
-                <span className="text-[10px] text-neutral-500 block">
-                  Receberás a solicitação no teu aplicativo Multicaixa Express.
-                </span>
-              </div>
-            )}
-
-            {paymentMethod === 'transferencia' && (
-              <div className="p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-neutral-500 font-semibold">Banco:</span>
-                  <strong className="text-neutral-900">Banco Angolano de Investimentos (BAI)</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-500 font-semibold">Beneficiário:</span>
-                  <strong className="text-neutral-900">BABA SHOPPING ANGOLA LDA</strong>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-neutral-500 font-semibold">IBAN:</span>
-                  <code className="text-[11px] font-mono font-bold text-neutral-900 bg-white px-1.5 py-0.5 rounded border border-blue-200">
-                    AO06.0040.0000.9924.8105.1012.8
-                  </code>
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === 'referencia' && (
-              <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-neutral-500 font-semibold">Entidade:</span>
-                  <strong className="text-neutral-900">00142 (BABA SHOPPING AO)</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-500 font-semibold">Referência:</span>
-                  <strong className="text-neutral-900 font-mono">992 481 054</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-500 font-semibold">Montante:</span>
-                  <strong className="text-neutral-900 tabular-nums">{formatKz(customAmount)}</strong>
-                </div>
-              </div>
-            )}
-
-            {/* FAIXA ONDE COLOCAR O COMPROVANTE (RECEIPT PROOF STRIP) */}
-            <div className="p-3.5 rounded-2xl bg-amber-50/90 border-2 border-amber-300 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-neutral-900 flex items-center gap-1.5">
-                  <Upload className="w-4 h-4 text-[#FF6A00]" />
-                  <span>Faixa de Comprovativo de Pagamento</span>
-                </span>
-                <span className="text-[10px] font-bold text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-md">
-                  {receiptProof ? '✓ Anexado' : 'Inserir Comprovativo'}
-                </span>
-              </div>
-              <p className="text-[11px] text-neutral-600 leading-tight">
-                Anexa a foto do talão Multicaixa Express / transferência bancária ou digita o código do comprovativo para concluir o carregamento.
-              </p>
-
-              {/* Receipt Preview or Upload Trigger */}
-              {receiptProof ? (
-                <div className="flex items-center gap-3 p-2 bg-white rounded-xl border border-emerald-300">
-                  <img
-                    src={receiptProof}
-                    alt="Comprovativo"
-                    className="w-12 h-12 object-cover rounded-lg border border-neutral-200 shrink-0 shadow-2xs"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1 truncate">
-                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>{receiptProofName || 'Comprovativo de Pagamento'}</span>
-                    </span>
-                    <span className="text-[10px] text-neutral-400 block">
-                      Ficheiro validado e pronto para envio
-                    </span>
+              <div className="p-3 rounded-xl bg-orange-50/80 border border-orange-200 text-xs space-y-2">
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-orange-200/70">
+                  <div className="flex items-center gap-2.5">
+                    <img
+                      src="/assets/aistudio/IMG_4106_b00dac5c.jpeg"
+                      alt="Express"
+                      className="w-12 h-8 rounded-lg object-cover border border-orange-300 shrink-0"
+                    />
+                    <div>
+                      <span className="text-[10px] font-bold uppercase text-orange-800 block">Nº Xpress Oficial</span>
+                      <span className="text-sm font-black font-mono text-neutral-900 tracking-wide">933 191 188</span>
+                    </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setReceiptProof(null);
-                      setReceiptProofName('');
-                    }}
-                    className="text-xs font-bold text-red-600 hover:text-red-800 p-1 cursor-pointer shrink-0"
-                    title="Remover ficheiro"
+                    onClick={() => handleCopyField('933191188', 'xpress')}
+                    className="px-2.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-amber-400 font-bold text-[11px] flex items-center gap-1 cursor-pointer shrink-0"
                   >
-                    <X className="w-4 h-4" />
+                    {copiedKey === 'xpress' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedKey === 'xpress' ? 'Copiado!' : 'Copiar Nº'}</span>
                   </button>
                 </div>
+                <span className="text-[11px] text-neutral-700 block">
+                  {customAmount > 0 ? `Transfere ${formatKz(customAmount)} via Express para ` : 'Transfere o valor selecionado via Express para '}
+                  <strong>933 191 188</strong> e carrega o comprovativo abaixo.
+                </span>
+              </div>
+            )}
+
+            {paymentMethod === 'paypay' && (
+              <div className="p-3 rounded-xl bg-indigo-50/80 border border-indigo-200 text-xs space-y-2">
+                <div className="flex items-center gap-2.5 pb-2 border-b border-indigo-200/70">
+                  <img
+                    src="/assets/aistudio/IMG_1417_a64da3e1.jpeg"
+                    alt="PayPay"
+                    className="w-9 h-9 rounded-lg object-cover border border-indigo-300 shrink-0"
+                  />
+                  <div>
+                    <span className="text-xs font-black text-indigo-950 block">Pagamento por Referência PayPay</span>
+                    <span className="text-[10px] text-indigo-700 font-medium">Usa os dados oficiais abaixo na app PayPay</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100">
+                  <span className="text-neutral-500 font-semibold">Entidade (Ent):</span>
+                  <div className="flex items-center gap-2">
+                    <strong className="text-neutral-950 font-mono text-sm">10116</strong>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyField('10116', 'ent')}
+                      className="px-2 py-0.5 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-900 font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedKey === 'ent' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedKey === 'ent' ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100">
+                  <span className="text-neutral-500 font-semibold">Referência (Ref):</span>
+                  <div className="flex items-center gap-2">
+                    <strong className="text-neutral-950 font-mono text-sm">935 723 248</strong>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyField('935723248', 'ref')}
+                      className="px-2 py-0.5 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-900 font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedKey === 'ref' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedKey === 'ref' ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-between px-1 pt-0.5">
+                  <span className="text-neutral-500 font-semibold">Montante:</span>
+                  <strong className="text-neutral-900 tabular-nums">
+                    {customAmount > 0 ? formatKz(customAmount) : 'Seleciona o valor acima'}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {/* ÚNICO ESPAÇO GRANDE PARA CARREGAR O COMPROVATIVO */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black text-neutral-900">
+                  3. Comprovativo de Pagamento:
+                </label>
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                    receiptProof ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                  }`}
+                >
+                  {receiptProof ? '✓ Carregado' : 'Obrigatório'}
+                </span>
+              </div>
+
+              {receiptProof ? (
+                <div className="min-h-[170px] p-4 rounded-2xl bg-emerald-50/70 border-2 border-emerald-400 flex flex-col items-center justify-center gap-3 text-center">
+                  {receiptProof.startsWith('data:application/pdf') ? (
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-100 border border-emerald-300 flex items-center justify-center">
+                      <FileText className="w-8 h-8 text-emerald-700" />
+                    </div>
+                  ) : (
+                    <img
+                      src={receiptProof}
+                      alt="Comprovativo"
+                      className="w-full max-h-40 object-contain rounded-xl border border-emerald-200 bg-white p-1"
+                    />
+                  )}
+                  <div className="w-full space-y-1">
+                    <span className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1 truncate">
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span className="truncate">{receiptProofName || 'Comprovativo Carregado'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReceiptProof(null);
+                        setReceiptProofName('');
+                      }}
+                      className="text-xs font-bold text-red-600 hover:text-red-800 underline cursor-pointer"
+                    >
+                      Remover e carregar outro ficheiro
+                    </button>
+                  </div>
+                </div>
               ) : (
-                <label className="flex items-center justify-center gap-2 p-3 bg-white border-2 border-dashed border-amber-300 hover:border-amber-500 rounded-xl cursor-pointer text-xs font-bold text-neutral-700 hover:text-orange-600 transition-colors shadow-2xs">
-                  <Upload className="w-4 h-4 text-[#FF6A00]" />
-                  <span>📸 Clica aqui para anexar a foto ou PDF do comprovativo</span>
+                <label className="min-h-[170px] p-6 rounded-2xl bg-amber-50/70 hover:bg-amber-50 border-2 border-dashed border-amber-400 hover:border-[#FF4500] flex flex-col items-center justify-center gap-2.5 text-center cursor-pointer transition-all group">
+                  <div className="w-14 h-14 rounded-2xl bg-white border border-amber-200 shadow-xs flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <Upload className="w-7 h-7 text-[#FF4500]" />
+                  </div>
+                  <span className="text-sm font-black text-neutral-900">
+                    Carregar Comprovativo
+                  </span>
+                  <span className="text-xs font-medium text-neutral-600 max-w-[260px]">
+                    Toca neste espaço grande para anexar a foto do talão ou ficheiro PDF
+                  </span>
                   <input
                     type="file"
                     accept="image/*,application/pdf"
@@ -496,20 +606,6 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
                   />
                 </label>
               )}
-
-              {/* Transaction Code / Reference input */}
-              <div>
-                <label className="text-[10px] font-bold text-neutral-700 block mb-0.5">
-                  Nº de Operação ou Código do Comprovativo (Opcional se anexar foto):
-                </label>
-                <input
-                  type="text"
-                  value={transactionCode}
-                  onChange={e => setTransactionCode(e.target.value)}
-                  placeholder="Ex: MCX-948123 ou TRF-BAI-4819"
-                  className="w-full py-1.5 px-2.5 bg-white border border-neutral-300 rounded-lg text-xs font-mono text-neutral-900 focus:outline-none focus:ring-1 focus:ring-orange-400"
-                />
-              </div>
 
               {/* Admin Approval Required Note */}
               <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-900 bg-amber-100/80 px-2.5 py-1.5 rounded-lg border border-amber-300">

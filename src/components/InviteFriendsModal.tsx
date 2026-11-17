@@ -19,17 +19,17 @@ import {
 } from '../services/db';
 import { copyTextToClipboard } from '../utils/image';
 
-interface InviteFriendsModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+interface InviteFriendsViewProps {
   currentUser?: any;
   onNavigateToWallet?: () => void;
+  onClose?: () => void;
+  isModal?: boolean;
 }
 
-export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
-  isOpen,
+export const InviteFriendsView: React.FC<InviteFriendsViewProps> = ({
+  currentUser,
   onClose,
-  currentUser
+  isModal = false
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -40,8 +40,6 @@ export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
     window.addEventListener(DB_STATE_EVENT, onDb);
     return () => window.removeEventListener(DB_STATE_EVENT, onDb);
   }, []);
-
-  if (!isOpen) return null;
 
   const userCode = getUserInviteCode(currentUser);
 
@@ -96,87 +94,83 @@ export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
   const approvedInvitesCount = invitedUsers.filter(u => u.accountStatus === 'ativo').length;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl border border-neutral-200 my-auto text-neutral-900 relative flex flex-col max-h-[92vh]"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="bg-gradient-to-r from-neutral-950 via-neutral-900 to-neutral-950 text-white p-5 sm:p-6 border-b border-neutral-800 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-neutral-950 flex items-center justify-center shadow-lg shadow-orange-500/20 shrink-0">
-              <Gift className="w-6 h-6 stroke-[2.5]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-400 text-neutral-950">
-                  Bónus de Indicação
-                </span>
-                <span className="text-xs text-amber-300 font-bold hidden sm:inline">
-                  +1.000 Kz por Amigo
-                </span>
-              </div>
-              <h2 className="text-lg sm:text-xl font-black text-white leading-tight mt-0.5">
-                Convidar Amigos & Ganhar Bónus
-              </h2>
-            </div>
+    <div className={isModal ? 'flex flex-col flex-1 min-h-0' : 'w-full space-y-6 pb-12'}>
+      {/* Header */}
+      <div className={`bg-gradient-to-r from-neutral-950 via-neutral-900 to-neutral-950 text-white p-5 sm:p-6 border border-neutral-800 flex items-center justify-between shrink-0 ${isModal ? 'border-x-0 border-t-0' : 'rounded-2xl shadow-sm'}`}>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-neutral-950 flex items-center justify-center shadow-lg shadow-orange-500/20 shrink-0">
+            <Gift className="w-6 h-6 stroke-[2.5]" />
           </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-400 text-neutral-950">
+                Bónus de Indicação
+              </span>
+              <span className="text-xs text-amber-300 font-bold">
+                +1.000 Kz por Amigo
+              </span>
+            </div>
+            <h1 className="text-lg sm:text-2xl font-black text-white leading-tight mt-0.5">
+              Convidar Amigos & Ganhar Bónus
+            </h1>
+          </div>
+        </div>
+        {isModal && onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+            className="p-1.5 text-neutral-400 hover:text-white rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer shrink-0"
             title="Fechar"
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
+        )}
+      </div>
 
-        {/* Scrollable Body */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-left text-xs sm:text-sm">
-          {/* Banner Promo */}
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-black text-[#FF6A00] uppercase tracking-wide">
-                <Sparkles className="w-4 h-4 text-[#FF6A00]" />
-                <span>Como Funciona o Programa de Convites:</span>
-              </div>
-              <span className="text-xs font-black text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
-                Ilimitado
-              </span>
+      {/* Body */}
+      <div className={`${isModal ? 'p-5 sm:p-6 overflow-y-auto' : 'bg-white rounded-2xl border border-neutral-200 p-4 sm:p-6 shadow-2xs'} space-y-5 text-left text-xs sm:text-sm`}>
+        {/* Banner Promo */}
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200/80 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-black text-[#FF6A00] uppercase tracking-wide">
+              <Sparkles className="w-4 h-4 text-[#FF6A00] shrink-0" />
+              <span>Como Funciona o Programa de Convites:</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs text-neutral-700">
-              <div className="p-2.5 rounded-xl bg-white border border-orange-100 space-y-1">
-                <span className="w-5 h-5 rounded-full bg-[#FF6A00] text-white flex items-center justify-center text-[10px] font-black">
-                  1
-                </span>
-                <p className="font-bold text-neutral-900 leading-snug">Copia o Teu Link</p>
-                <p className="text-[11px] text-neutral-500 leading-tight">Copia o link de convite ou código e envia para os teus amigos.</p>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white border border-orange-100 space-y-1">
-                <span className="w-5 h-5 rounded-full bg-[#FF6A00] text-white flex items-center justify-center text-[10px] font-black">
-                  2
-                </span>
-                <p className="font-bold text-neutral-900 leading-snug">Amigo Valida o BI</p>
-                <p className="text-[11px] text-neutral-500 leading-tight">O teu amigo cria conta e envia o seu BI para validação do Administrador.</p>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white border border-orange-100 space-y-1">
-                <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">
-                  3
-                </span>
-                <p className="font-bold text-emerald-800 leading-snug">Recebes 1.000 Kz</p>
-                <p className="text-[11px] text-neutral-500 leading-tight">Assim que o Adm aprovar a conta dele, recebes 1.000 Kz na carteira!</p>
-              </div>
+            <span className="text-xs font-black text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full shrink-0">
+              Ilimitado
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs text-neutral-700">
+            <div className="p-3 rounded-xl bg-white border border-orange-100 space-y-1">
+              <span className="w-5 h-5 rounded-full bg-[#FF6A00] text-white flex items-center justify-center text-[10px] font-black">
+                1
+              </span>
+              <p className="font-bold text-neutral-900 leading-snug">Copia o Teu Link</p>
+              <p className="text-[11px] text-neutral-500 leading-tight">Copia o link de convite ou código e envia para os teus amigos.</p>
+            </div>
+            <div className="p-3 rounded-xl bg-white border border-orange-100 space-y-1">
+              <span className="w-5 h-5 rounded-full bg-[#FF6A00] text-white flex items-center justify-center text-[10px] font-black">
+                2
+              </span>
+              <p className="font-bold text-neutral-900 leading-snug">Amigo Valida o BI</p>
+              <p className="text-[11px] text-neutral-500 leading-tight">O teu amigo cria conta e envia o seu BI para validação do Administrador.</p>
+            </div>
+            <div className="p-3 rounded-xl bg-white border border-orange-100 space-y-1">
+              <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">
+                3
+              </span>
+              <p className="font-bold text-emerald-800 leading-snug">Recebes 1.000 Kz</p>
+              <p className="text-[11px] text-neutral-500 leading-tight">Assim que o Adm aprovar a conta dele, recebes 1.000 Kz na carteira!</p>
             </div>
           </div>
+        </div>
 
-          {/* Referral Link Box (Most prominent first!) */}
+        {/* Link & Code Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label className="text-xs font-bold text-neutral-800 flex items-center justify-between">
+            <label className="text-xs font-bold text-neutral-800 flex items-center justify-between gap-2">
               <span>Link Direto de Convite:</span>
-              <span className="text-[11px] text-[#FF6A00] font-semibold">Abre já com o teu código aplicado</span>
+              <span className="text-[11px] text-[#FF6A00] font-semibold">Abre já com o teu código</span>
             </label>
             <div className="flex items-center gap-2 p-1.5 rounded-2xl border-2 border-orange-200 bg-orange-50/30">
               <input
@@ -184,36 +178,35 @@ export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
                 readOnly
                 value={inviteLink}
                 onFocus={e => e.currentTarget.select()}
-                className="flex-1 px-3 py-1.5 bg-transparent text-xs text-neutral-800 font-semibold truncate focus:outline-none"
+                className="flex-1 min-w-0 px-3 py-1.5 bg-transparent text-xs text-neutral-800 font-semibold truncate focus:outline-none"
               />
               <button
                 type="button"
                 onClick={handleCopyLink}
-                className="px-4 py-2.5 bg-[#FF6A00] hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs active:scale-95"
+                className="px-3.5 py-2.5 bg-[#FF6A00] hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs active:scale-95"
               >
                 {copiedLink ? (
                   <>
                     <Check className="w-4 h-4 text-white" />
-                    <span>Link Copiado!</span>
+                    <span>Copiado!</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-4 h-4 text-white" />
-                    <span>Copiar Link de Convite</span>
+                    <span>Copiar Link</span>
                   </>
                 )}
               </button>
             </div>
           </div>
 
-          {/* Referral Code Box */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-neutral-800 flex items-center justify-between">
+            <label className="text-xs font-bold text-neutral-800 flex items-center justify-between gap-2">
               <span>O Teu Código Exclusivo de Convite:</span>
-              <span className="text-[11px] text-neutral-500">Os amigos também podem digitar no registo</span>
+              <span className="text-[11px] text-neutral-500">Para digitar no registo</span>
             </label>
-            <div className="flex items-center gap-2 p-2 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/50">
-              <span className="flex-1 font-mono font-black text-base sm:text-lg text-neutral-900 px-3 tracking-widest text-center">
+            <div className="flex items-center gap-2 p-1.5 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/50">
+              <span className="flex-1 font-mono font-black text-base sm:text-lg text-neutral-900 px-3 tracking-widest text-center truncate">
                 {userCode}
               </span>
               <button
@@ -235,130 +228,165 @@ export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
               </button>
             </div>
           </div>
+        </div>
 
-          {/* Quick Share Buttons */}
-          <div className="space-y-2 pt-1">
-            <span className="text-xs font-bold text-neutral-700 block">
-              Partilhar Imediatamente com os Teus Amigos:
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={handleShareWhatsApp}
-                className="py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-              >
-                <MessageCircle className="w-4 h-4" />
-                <span>Enviar no WhatsApp</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (navigator.share) {
-                    navigator
-                      .share({
-                        title: 'BABA SHOPPING Angola - Convite',
-                        text: shareMessage,
-                        url: inviteLink
-                      })
-                      .catch(() => handleCopyLink());
-                  } else {
-                    handleCopyLink();
-                  }
-                }}
-                className="py-3 px-4 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs sm:text-sm rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-              >
-                <Share2 className="w-4 h-4 text-amber-400" />
-                <span>Partilhar / Copiar</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Your Invitation Stats */}
-          <div className="p-4 rounded-2xl bg-neutral-900 text-white space-y-3">
-            <div className="flex items-center justify-between border-b border-neutral-800 pb-2.5">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-amber-400" />
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  O Teu Painel de Convites
-                </span>
-              </div>
-              <span className="text-[10px] text-neutral-400">
-                Atualizado em tempo real
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="p-2.5 rounded-xl bg-neutral-800/80 border border-neutral-700">
-                <span className="text-[10px] text-neutral-400 block font-semibold">Amigos Convidados</span>
-                <span className="text-base sm:text-lg font-black text-white tabular-nums">{invitedUsers.length}</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-neutral-800/80 border border-neutral-700">
-                <span className="text-[10px] text-neutral-400 block font-semibold">Contas Validadas</span>
-                <span className="text-base sm:text-lg font-black text-amber-400 tabular-nums">{approvedInvitesCount}</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-neutral-800/80 border border-neutral-700">
-                <span className="text-[10px] text-neutral-400 block font-semibold">Bónus Recebidos</span>
-                <span className="text-base sm:text-lg font-black text-emerald-400 tabular-nums">{formatKz(totalReferralBonus)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Referrals List */}
-          <div className="space-y-2">
-            <span className="text-xs font-bold text-neutral-700 block">
-              Amigos Convidados ({invitedUsers.length}):
-            </span>
-            {invitedUsers.length === 0 ? (
-              <div className="p-5 text-center border border-neutral-200 rounded-2xl bg-neutral-50/70 text-xs text-neutral-500">
-                Ainda não tens amigos registados com o teu link. Copia o teu link acima e partilha!
-              </div>
-            ) : (
-              <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-2xl overflow-hidden bg-neutral-50/50">
-                {invitedUsers.map(f => (
-                  <div key={f.id} className="p-3 flex items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-neutral-900 text-amber-400 font-bold flex items-center justify-center text-xs shrink-0">
-                        {f.name.charAt(0)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-bold text-neutral-900 truncate">{f.name}</p>
-                        <p className="text-[10px] text-neutral-400 font-mono">
-                          BI: {f.idNumber || 'Pendente'} · {f.province}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      {f.accountStatus === 'ativo' ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          +1.000 Kz
-                        </span>
-                      ) : f.accountStatus === 'rejeitado' ? (
-                        <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md">
-                          Rejeitado
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
-                          Em Revisão
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Guarantee footer */}
-          <div className="pt-2 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500">
-            <span className="flex items-center gap-1">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Garantia de Pagamento Trade Assurance BABA</span>
-            </span>
-            <span className="font-bold text-neutral-400">
-              Bónus creditado automaticamente
-            </span>
+        {/* Quick Share Buttons */}
+        <div className="space-y-2 pt-1">
+          <span className="text-xs font-bold text-neutral-700 block">
+            Partilhar Imediatamente com os Teus Amigos:
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={handleShareWhatsApp}
+              className="py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>Enviar no WhatsApp</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (navigator.share) {
+                  navigator
+                    .share({
+                      title: 'BABA SHOPPING Angola - Convite',
+                      text: shareMessage,
+                      url: inviteLink
+                    })
+                    .catch(() => handleCopyLink());
+                } else {
+                  handleCopyLink();
+                }
+              }}
+              className="py-3 px-4 bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs sm:text-sm rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+            >
+              <Share2 className="w-4 h-4 text-amber-400" />
+              <span>Partilhar / Copiar</span>
+            </button>
           </div>
         </div>
+
+        {/* Your Invitation Stats */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-neutral-900 text-white space-y-3">
+          <div className="flex items-center justify-between border-b border-neutral-800 pb-2.5">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-bold text-white uppercase tracking-wider">
+                O Teu Painel de Convites
+              </span>
+            </div>
+            <span className="text-[10px] text-neutral-400">
+              Atualizado em tempo real
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="p-3 rounded-xl bg-neutral-800/80 border border-neutral-700">
+              <span className="text-[10px] text-neutral-400 block font-semibold">Amigos Convidados</span>
+              <span className="text-base sm:text-xl font-black text-white tabular-nums">{invitedUsers.length}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-neutral-800/80 border border-neutral-700">
+              <span className="text-[10px] text-neutral-400 block font-semibold">Contas Validadas</span>
+              <span className="text-base sm:text-xl font-black text-amber-400 tabular-nums">{approvedInvitesCount}</span>
+            </div>
+            <div className="p-3 rounded-xl bg-neutral-800/80 border border-neutral-700">
+              <span className="text-[10px] text-neutral-400 block font-semibold">Bónus Recebidos</span>
+              <span className="text-base sm:text-xl font-black text-emerald-400 tabular-nums">{formatKz(totalReferralBonus)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Recent Referrals List */}
+        <div className="space-y-2">
+          <span className="text-xs font-bold text-neutral-700 block">
+            Amigos Convidados ({invitedUsers.length}):
+          </span>
+          {invitedUsers.length === 0 ? (
+            <div className="p-6 text-center border border-neutral-200 rounded-2xl bg-neutral-50/70 text-xs text-neutral-500">
+              Ainda não tens amigos registados com o teu link. Copia o teu link acima e partilha!
+            </div>
+          ) : (
+            <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-2xl overflow-hidden bg-neutral-50/50">
+              {invitedUsers.map(f => (
+                <div key={f.id} className="p-3 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-neutral-900 text-amber-400 font-bold flex items-center justify-center text-xs shrink-0">
+                      {f.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-neutral-900 truncate">{f.name}</p>
+                      <p className="text-[10px] text-neutral-400 font-mono">
+                        BI: {f.idNumber || 'Pendente'} · {f.province}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {f.accountStatus === 'ativo' ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        +1.000 Kz
+                      </span>
+                    ) : f.accountStatus === 'rejeitado' ? (
+                      <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md">
+                        Rejeitado
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
+                        Em Revisão
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Guarantee footer */}
+        <div className="pt-2 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-500">
+          <span className="flex items-center gap-1">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>Garantia de Pagamento Trade Assurance BABA</span>
+          </span>
+          <span className="font-bold text-neutral-400">
+            Bónus creditado automaticamente
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface InviteFriendsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  currentUser?: any;
+  onNavigateToWallet?: () => void;
+}
+
+export const InviteFriendsModal: React.FC<InviteFriendsModalProps> = ({
+  isOpen,
+  onClose,
+  currentUser,
+  onNavigateToWallet
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl border border-neutral-200 my-auto text-neutral-900 relative flex flex-col max-h-[92vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        <InviteFriendsView
+          currentUser={currentUser}
+          onNavigateToWallet={onNavigateToWallet}
+          onClose={onClose}
+          isModal={true}
+        />
       </div>
     </div>
   );

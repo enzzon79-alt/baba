@@ -289,9 +289,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#FAFAFB] via-[#F4F4F6] to-[#EAEAEF] text-neutral-900 flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans">
+    <div className="min-h-screen w-full max-w-full overflow-x-clip bg-gradient-to-br from-[#FAFAFB] via-[#F4F4F6] to-[#EAEAEF] text-neutral-900 flex flex-col justify-between p-3 sm:p-5 lg:p-6 font-sans">
       {/* Top Header com Logótipo Oficial BABA SHOPPING */}
-      <div className="max-w-5xl w-full mx-auto flex items-center justify-between pb-4 border-b border-neutral-200">
+      <div className="w-full flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-neutral-200">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#FF5000] via-[#FF6A00] to-[#FFAA00] flex items-center justify-center text-white shadow-lg shadow-orange-500/25 p-1.5 shrink-0">
             <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full drop-shadow-sm">

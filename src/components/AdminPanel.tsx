@@ -287,6 +287,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // -------------------------------------------------------------
   // Deposits Actions
   // -------------------------------------------------------------
+  const formatPaymentMethodLabel = (method?: string) => {
+    if (method === 'multicaixa_express') return 'Multicaixa Express (933 191 188)';
+    if (method === 'paypay') return 'PayPay (Ent: 10116 | Ref: 935 723 248)';
+    if (method === 'transferencia') return 'Transferência Bancária';
+    if (method === 'referencia') return 'Pagamento por Referência';
+    return method || 'Multicaixa Express';
+  };
+
   const handleApproveDeposit = (d: DepositRequest) => {
     try {
       approveDeposit(d.id);
@@ -811,11 +819,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   }, [deposits, withdrawals, users]);
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-16 animate-fadeIn">
+    <div className="w-full max-w-full overflow-x-hidden space-y-6 pb-16 animate-fadeIn">
       {/* Toast Alert */}
       {actionAlert && (
         <div
-          className={`fixed top-5 right-5 z-[100] max-w-md w-full p-4 rounded-2xl shadow-2xl border flex items-center justify-between gap-3 animate-fadeIn ${
+          className={`fixed top-3 left-3 right-3 sm:left-auto sm:top-5 sm:right-5 z-[100] sm:max-w-md w-auto sm:w-full p-4 rounded-2xl shadow-2xl border flex items-center justify-between gap-3 animate-fadeIn ${
             actionAlert.type === 'success'
               ? 'bg-emerald-950 text-emerald-100 border-emerald-500 shadow-emerald-900/30'
               : actionAlert.type === 'info'
@@ -874,7 +882,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto max-w-full">
             <button
               type="button"
               onClick={handleManualRefresh}
@@ -1048,7 +1056,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
         {/* Executive Bottom Navigation Dock Bar matching exact requested order */}
         <div className="pt-2">
-          <div className="bg-[#080E1E] border border-blue-900/60 p-2 rounded-2xl flex items-center gap-1.5 overflow-x-auto text-xs font-bold shadow-inner">
+          <div className="bg-[#080E1E] border border-blue-900/60 p-2 rounded-2xl flex items-center gap-1.5 overflow-x-auto scrollbar-none w-full max-w-full text-xs font-bold shadow-inner">
             {/* 1. TOTAL DE USUÁRIOS */}
             <button
               type="button"
@@ -1903,7 +1911,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             {/* Filters & Search */}
             <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between pt-2 border-t border-neutral-100">
-              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl overflow-x-auto">
+              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl overflow-x-auto scrollbar-none max-w-full">
                 <button
                   type="button"
                   onClick={() => setDepositFilter('pendente')}
@@ -1950,7 +1958,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               </div>
 
-              <div className="relative min-w-[260px]">
+              <div className="relative w-full sm:w-auto sm:min-w-[240px]">
                 <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -2010,8 +2018,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               </div>
                             </td>
                             <td className="py-3.5 px-4">
-                              <div className="font-bold text-neutral-900">{d.paymentMethod}</div>
-                              <div className="font-mono text-[11px] text-neutral-500">
+                              <div className="flex items-center gap-2">
+                                {(d.paymentMethod === 'multicaixa_express' || d.paymentMethod === 'paypay') && (
+                                  <img
+                                    src={
+                                      d.paymentMethod === 'paypay'
+                                        ? '/assets/aistudio/IMG_1417_a64da3e1.jpeg'
+                                        : '/assets/aistudio/IMG_4106_b00dac5c.jpeg'
+                                    }
+                                    alt={d.paymentMethod}
+                                    className="w-7 h-6 rounded object-cover border border-neutral-200 shrink-0"
+                                  />
+                                )}
+                                <div className="font-bold text-neutral-900">{formatPaymentMethodLabel(d.paymentMethod)}</div>
+                              </div>
+                              <div className="font-mono text-[11px] text-neutral-500 mt-0.5">
                                 Ref: <strong className="text-neutral-700">{d.reference}</strong>
                               </div>
                             </td>
@@ -2117,8 +2138,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                             <h4 className="text-sm font-black text-neutral-900">{d.userName}</h4>
-                            <span className="font-mono text-[10px] text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded">
-                              {d.paymentMethod}
+                            <span className="font-mono text-[10px] text-neutral-700 bg-neutral-100 px-2 py-0.5 rounded inline-flex items-center gap-1.5">
+                              {(d.paymentMethod === 'multicaixa_express' || d.paymentMethod === 'paypay') && (
+                                <img
+                                  src={
+                                    d.paymentMethod === 'paypay'
+                                      ? '/assets/aistudio/IMG_1417_a64da3e1.jpeg'
+                                      : '/assets/aistudio/IMG_4106_b00dac5c.jpeg'
+                                  }
+                                  alt={d.paymentMethod}
+                                  className="w-4 h-4 rounded-sm object-cover shrink-0"
+                                />
+                              )}
+                              <span>{formatPaymentMethodLabel(d.paymentMethod)}</span>
                             </span>
                           </div>
                           <div className="text-xs text-neutral-500 mt-0.5">
@@ -2253,7 +2285,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             {/* Filters & Search */}
             <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between pt-2 border-t border-neutral-100">
-              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl overflow-x-auto">
+              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl overflow-x-auto scrollbar-none max-w-full">
                 <button
                   type="button"
                   onClick={() => setWithdrawalFilter('pendente')}
@@ -2300,7 +2332,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               </div>
 
-              <div className="relative min-w-[260px]">
+              <div className="relative w-full sm:w-auto sm:min-w-[240px]">
                 <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -2555,7 +2587,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             {/* Filters & Search */}
             <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between pt-2 border-t border-neutral-100">
-              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl overflow-x-auto">
+              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl overflow-x-auto scrollbar-none max-w-full">
                 <button
                   type="button"
                   onClick={() => setKycFilter('em_processamento')}
@@ -2613,7 +2645,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               </div>
 
-              <div className="relative min-w-[260px]">
+              <div className="relative w-full sm:w-auto sm:min-w-[240px]">
                 <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -3847,7 +3879,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <div>
                 <h3 className="text-sm font-black text-white">{zoomedReceipt.title}</h3>
                 <span className="text-[11px] text-neutral-400">
-                  Ref: {zoomedReceipt.deposit.reference} • {zoomedReceipt.deposit.paymentMethod}
+                  Ref: {zoomedReceipt.deposit.reference} • {formatPaymentMethodLabel(zoomedReceipt.deposit.paymentMethod)}
                 </span>
               </div>
               <button
@@ -4586,7 +4618,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* 5-Conversation Switcher Bar */}
               {sameListingNegs.length > 1 && (
-                <div className="px-3 py-2 bg-neutral-900 border-b border-neutral-800 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+                <div className="px-3 py-2 bg-neutral-900 border-b border-neutral-800 flex items-center gap-1.5 overflow-x-auto scrollbar-none max-w-full">
                   <span className="text-[10px] font-bold text-neutral-400 uppercase shrink-0 mr-1">
                     Conversas ({sameListingNegs.length}):
                   </span>
@@ -4681,7 +4713,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               {/* Counteroffer Tool inside Chat (always open until closed so Admin & seller can negotiate freely) */}
               {!isClosed && (
                 <div className="p-3 bg-neutral-100/80 border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                     <span className="text-[11px] font-bold text-neutral-600 whitespace-nowrap">
                       Propor Valor (Kz):
                     </span>
