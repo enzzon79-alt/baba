@@ -74,9 +74,10 @@ import {
   dispatchDbChange,
   syncUsersFromFirestore,
   syncAdminCollectionsFromFirestore,
+  getAllTransactions,
   DB_STATE_EVENT
 } from '../services/db';
-import { User, DepositRequest, WithdrawalRequest, ResaleListing, Negotiation } from '../types';
+import { User, DepositRequest, WithdrawalRequest, ResaleListing, Negotiation, Transaction } from '../types';
 
 export interface BuyerPersona {
   id: string;
@@ -158,6 +159,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>(() => getWithdrawals());
   const [resaleListings, setResaleListings] = useState<ResaleListing[]>(() => getResaleListings());
   const [negotiations, setNegotiations] = useState<Negotiation[]>(() => getNegotiations(currentUser.id));
+  const [transactions, setTransactions] = useState<Transaction[]>(() => getAllTransactions());
+  const [liveFilter, setLiveFilter] = useState<'all' | 'pendente' | 'deposito' | 'saque' | 'transacoes' | 'kyc' | 'revenda'>('all');
 
   // Local notifications / alerts
   const [actionAlert, setActionAlert] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -229,6 +232,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setWithdrawals([...getWithdrawals()]);
     setResaleListings([...getResaleListings()]);
     setNegotiations([...getNegotiations(currentUser.id)]);
+    setTransactions([...getAllTransactions()]);
     if (onRefreshState) onRefreshState();
   };
 
@@ -250,8 +254,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       refreshData();
     });
     const handleDbChange = () => refreshData();
+    const handleFocusSync = () => handleManualRefresh();
     window.addEventListener(DB_STATE_EVENT, handleDbChange);
-    return () => window.removeEventListener(DB_STATE_EVENT, handleDbChange);
+    window.addEventListener('storage', handleDbChange);
+    window.addEventListener('focus', handleFocusSync);
+    return () => {
+      window.removeEventListener(DB_STATE_EVENT, handleDbChange);
+      window.removeEventListener('storage', handleDbChange);
+      window.removeEventListener('focus', handleFocusSync);
+    };
   }, [currentUser.id]);
 
   const showAlert = (msg: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -321,7 +332,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleApproveWithdrawal = (w: WithdrawalRequest) => {
     try {
       processWithdrawal(w.id, 'processado');
-      showAlert(`Levantamento de ${formatKz(w.amount)} para ${w.userName} aprovado e transferido com sucesso!`, 'success');
+      showAlert(`Levantamento de ${formatKz(w.amount)} aprovado, debitado da conta de ${w.userName} e marcado como Sucesso no extrato!`, 'success');
       refreshData();
     } catch (err: any) {
       showAlert(err.message || 'Erro ao aprovar levantamento.', 'error');
@@ -331,7 +342,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleRejectWithdrawal = (w: WithdrawalRequest) => {
     try {
       processWithdrawal(w.id, 'rejeitado');
-      showAlert(`Levantamento de ${formatKz(w.amount)} recusado. O montante retornou ao saldo do utilizador.`, 'error');
+      showAlert(`Levantamento de ${formatKz(w.amount)} recusado. O saldo de ${w.userName} não foi debitado e o extrato foi atualizado.`, 'error');
       refreshData();
     } catch (err: any) {
       showAlert(err.message || 'Erro ao recusar levantamento.', 'error');
@@ -768,55 +779,144 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return list;
   }, [users, memberSearch, memberStatusFilter, memberProvinceFilter, memberSortBy]);
 
-  // Live movements stream for 'AO VIVO' view
+  const pendingDepositsList = useMemo(() => deposits.filter(d => d.status === 'pendente'), [deposits]);
+  const pendingWithdrawalsList = useMemo(() => withdrawals.filter(w => w.status === 'pendente'), [withdrawals]);
+
+  // Live movements stream for 'AO VIVO' view (TODOS os movimentos sem corte!)
   const liveMovements = useMemo(() => {
     const list: Array<{
       id: string;
-      type: 'deposito' | 'saque' | 'kyc';
+      type: 'deposito' | 'saque' | 'kyc' | 'transacao' | 'revenda' | 'negociacao';
       title: string;
       desc: string;
       time: string;
+      rawTime: number;
       amount?: number;
-      color: 'emerald' | 'amber' | 'purple' | 'cyan';
+      statusLabel: 'Pendente' | 'Sucesso' | 'Recusada' | 'Ativo';
+      isPending?: boolean;
+      color: 'emerald' | 'amber' | 'purple' | 'cyan' | 'red' | 'orange';
+      depositObj?: DepositRequest;
+      withdrawalObj?: WithdrawalRequest;
+      kycUser?: User;
     }> = [];
 
-    deposits.slice(0, 4).forEach(d => {
+    deposits.forEach(d => {
+      const ts = new Date(d.createdAt || 0).getTime();
+      const statusLabel = d.status === 'aprovado' ? 'Sucesso' : d.status === 'rejeitado' ? 'Recusada' : 'Pendente';
       list.push({
         id: `mov_dep_${d.id}`,
         type: 'deposito',
-        title: `Depósito ${d.status === 'aprovado' ? 'Aprovado' : 'Aguardando Aprovação'}`,
+        title: `Depósito (${formatPaymentMethodLabel(d.paymentMethod)})`,
         desc: `${d.userName} • Ref: ${d.reference}`,
-        time: new Date(d.createdAt).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' }),
+        time: new Date(d.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        rawTime: isNaN(ts) ? Date.now() : ts,
         amount: d.amount,
-        color: d.status === 'aprovado' ? 'emerald' : 'cyan'
+        statusLabel,
+        isPending: d.status === 'pendente',
+        color: d.status === 'aprovado' ? 'emerald' : d.status === 'rejeitado' ? 'red' : 'cyan',
+        depositObj: d
       });
     });
 
-    withdrawals.slice(0, 4).forEach(w => {
+    withdrawals.forEach(w => {
+      const ts = new Date(w.createdAt || 0).getTime();
+      const statusLabel = w.status === 'processado' ? 'Sucesso' : w.status === 'rejeitado' ? 'Recusada' : 'Pendente';
       list.push({
         id: `mov_wit_${w.id}`,
         type: 'saque',
-        title: `Saque ${w.status === 'processado' ? 'Transferido' : 'Pendente de Pagamento'}`,
+        title: `Saque para ${w.bankName || 'Banco Angola'}`,
         desc: `${w.userName} • IBAN: ${w.iban || 'AO06...'}`,
-        time: new Date(w.createdAt).toLocaleTimeString('pt-AO', { hour: '2-digit', minute: '2-digit' }),
+        time: new Date(w.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        rawTime: isNaN(ts) ? Date.now() : ts,
         amount: w.amount,
-        color: w.status === 'processado' ? 'emerald' : 'amber'
+        statusLabel,
+        isPending: w.status === 'pendente',
+        color: w.status === 'processado' ? 'emerald' : w.status === 'rejeitado' ? 'red' : 'amber',
+        withdrawalObj: w
       });
     });
 
-    users.filter(u => u.accountStatus === 'em_processamento').slice(0, 2).forEach(u => {
+    transactions.forEach(tx => {
+      // Evita duplicar os tx_dep_ / tx_wth_ que já estão listados acima com botões de aprovação
+      if (tx.id.startsWith('tx_dep_') || tx.id.startsWith('tx_wth_')) return;
+      const ts = new Date(tx.createdAt || 0).getTime();
+      const statusLabel = tx.status === 'confirmada' ? 'Sucesso' : tx.status === 'recusada' ? 'Recusada' : 'Pendente';
+      list.push({
+        id: `mov_tx_${tx.id}`,
+        type: 'transacao',
+        title: tx.description || 'Movimento Financeiro',
+        desc: `${tx.userName} • Ref: ${tx.reference}`,
+        time: new Date(tx.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        rawTime: isNaN(ts) ? Date.now() : ts,
+        amount: Math.abs(tx.amount),
+        statusLabel,
+        isPending: tx.status === 'pendente',
+        color: tx.status === 'confirmada' ? 'emerald' : tx.status === 'recusada' ? 'red' : 'amber'
+      });
+    });
+
+    users.filter(u => u.accountStatus === 'em_processamento').forEach(u => {
+      const ts = new Date(u.createdAt || 0).getTime();
       list.push({
         id: `mov_kyc_${u.id}`,
         type: 'kyc',
-        title: 'Verificação de BI Submetida',
+        title: 'Validação de BI Submetida',
         desc: `${u.name} • BI: ${u.idNumber} (${u.province || 'Angola'})`,
-        time: 'Recente',
-        color: 'purple'
+        time: u.createdAt ? new Date(u.createdAt).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Recente',
+        rawTime: isNaN(ts) ? Date.now() : ts,
+        statusLabel: 'Pendente',
+        isPending: true,
+        color: 'purple',
+        kycUser: u
       });
     });
 
-    return list.slice(0, 6);
-  }, [deposits, withdrawals, users]);
+    resaleListings.forEach(l => {
+      const ts = new Date(l.createdAt || 0).getTime();
+      list.push({
+        id: `mov_lst_${l.id}`,
+        type: 'revenda',
+        title: `Anúncio de Revenda: ${l.productName}`,
+        desc: `Vendedor: ${l.sellerName} • Estado: ${l.status}`,
+        time: new Date(l.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        rawTime: isNaN(ts) ? Date.now() : ts,
+        amount: l.listingPrice,
+        statusLabel: l.status === 'vendido' ? 'Sucesso' : 'Ativo',
+        color: 'orange'
+      });
+    });
+
+    negotiations.forEach(n => {
+      const ts = new Date(n.updatedAt || n.createdAt || 0).getTime();
+      list.push({
+        id: `mov_neg_${n.id}`,
+        type: 'negociacao',
+        title: `Negociação: ${n.productName}`,
+        desc: `${n.buyerName} ⇄ ${n.sellerName} (${n.status})`,
+        time: new Date(n.updatedAt || n.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        rawTime: isNaN(ts) ? Date.now() : ts,
+        amount: n.currentProposedPrice,
+        statusLabel: n.status === 'concluida' || n.status === 'aceite' ? 'Sucesso' : n.status === 'recusada' ? 'Recusada' : 'Pendente',
+        color: 'cyan'
+      });
+    });
+
+    list.sort((a, b) => b.rawTime - a.rawTime);
+    return list;
+  }, [deposits, withdrawals, transactions, users, resaleListings, negotiations]);
+
+  const filteredLiveMovements = useMemo(() => {
+    return liveMovements.filter(m => {
+      if (liveFilter === 'all') return true;
+      if (liveFilter === 'pendente') return Boolean(m.isPending);
+      if (liveFilter === 'deposito') return m.type === 'deposito';
+      if (liveFilter === 'saque') return m.type === 'saque';
+      if (liveFilter === 'transacoes') return m.type === 'transacao';
+      if (liveFilter === 'kyc') return m.type === 'kyc';
+      if (liveFilter === 'revenda') return m.type === 'revenda' || m.type === 'negociacao';
+      return true;
+    });
+  }, [liveMovements, liveFilter]);
 
   return (
     <div className="w-full max-w-full overflow-x-hidden space-y-6 pb-16 animate-fadeIn">
@@ -1173,6 +1273,110 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
+      {/* CAIXA DE APROVAÇÃO IMEDIATA: TODOS OS DEPÓSITOS E SAQUES PENDENTES VISÍVEIS LOGO NO TOPO */}
+      {(pendingDepositsList.length > 0 || pendingWithdrawalsList.length > 0) && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-amber-50 via-orange-50 to-white border-2 border-amber-400 shadow-lg space-y-4 animate-fadeIn text-neutral-900">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#FF6A00] text-white flex items-center justify-center shrink-0 shadow-sm">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-black text-neutral-900">
+                  Movimentos Pendentes para Aprovar ({pendingDepositsList.length + pendingWithdrawalsList.length})
+                </h2>
+                <p className="text-[11px] text-neutral-600">
+                  Nenhum depósito é creditado e nenhum saque é debitado até que aproves aqui ou nos separadores abaixo.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setActiveTab('live'); setLiveFilter('pendente'); }}
+              className="px-3 py-1.5 rounded-xl bg-neutral-900 text-amber-400 text-xs font-black hover:bg-neutral-800 cursor-pointer self-start sm:self-auto"
+            >
+              Ver Todos ao Vivo ({liveMovements.length})
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {pendingDepositsList.map(d => (
+              <div key={d.id} className="p-3.5 rounded-2xl bg-white border border-emerald-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase">Depósito Pendente</span>
+                    <span className="font-black text-sm text-neutral-900 truncate">{d.userName}</span>
+                  </div>
+                  <div className="text-xs text-neutral-600 truncate">
+                    {formatPaymentMethodLabel(d.paymentMethod)} • Ref: <strong className="font-mono">{d.reference}</strong>
+                  </div>
+                  <div className="text-base font-black text-emerald-600 tabular-nums">+{formatKz(d.amount)}</div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  {d.receiptProof && (
+                    <button
+                      type="button"
+                      onClick={() => setZoomedReceipt({ title: `Comprovativo - ${d.userName} (${formatKz(d.amount)})`, src: d.receiptProof!, deposit: d })}
+                      className="px-2.5 py-1.5 rounded-xl bg-neutral-900 text-amber-400 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Talão</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleRejectDeposit(d)}
+                    className="px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold cursor-pointer"
+                  >
+                    Recusar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveDeposit(d)}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>Aprovar</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {pendingWithdrawalsList.map(w => (
+              <div key={w.id} className="p-3.5 rounded-2xl bg-white border border-purple-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-800 text-[10px] font-black uppercase">Saque Pendente</span>
+                    <span className="font-black text-sm text-neutral-900 truncate">{w.userName}</span>
+                  </div>
+                  <div className="text-xs text-neutral-600 truncate">
+                    {w.bankName} • <span className="font-mono">{w.iban}</span>
+                  </div>
+                  <div className="text-base font-black text-purple-700 tabular-nums">-{formatKz(w.amount)}</div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleRejectWithdrawal(w)}
+                    className="px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold cursor-pointer"
+                  >
+                    Recusar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveWithdrawal(w)}
+                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>Aprovar & Debitar</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {pendingKycCount > 0 && activeTab !== 'kyc' && (
         <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border-2 border-rose-300 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -1203,10 +1407,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-
-
       {/* ======================================================== */}
-      {/* TAB: FEED AO VIVO EM TEMPO REAL (MATCHING SCREENSHOT)   */}
+      {/* TAB: FEED AO VIVO EM TEMPO REAL (TODOS OS MOVIMENTOS)    */}
       {/* ======================================================== */}
       {activeTab === 'live' && (
         <div className="space-y-5 animate-fadeIn">
@@ -1217,25 +1419,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <Zap className="w-5 h-5 text-cyan-200" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-white">Movimentos ao Vivo na Plataforma</h2>
-                  <p className="text-xs text-slate-400">Fluxo em tempo real de depósitos, saques, anúncios e propostas de compra em Angola.</p>
+                  <h2 className="text-lg font-black text-white">Todos os Movimentos ao Vivo na Plataforma</h2>
+                  <p className="text-xs text-slate-400">Fluxo completo e em tempo real de depósitos, saques, compras, vendas, validações de BI e negociações.</p>
                 </div>
               </div>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-500/40 text-xs font-black self-start sm:self-auto">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                Monitorização Ativa
+                Monitorização Ativa ({liveMovements.length})
               </span>
             </div>
 
             {/* Quick Live Stats */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-blue-950">
               <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
-                <div className="text-[10px] font-bold uppercase text-slate-400">Total Utilizadores</div>
-                <div className="text-xl font-black text-white mt-0.5">{users.length}</div>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
-                <div className="text-[10px] font-bold uppercase text-amber-400">Produtos à Venda</div>
-                <div className="text-xl font-black text-white mt-0.5">{activeUserListings.length}</div>
+                <div className="text-[10px] font-bold uppercase text-slate-400">Total Movimentos</div>
+                <div className="text-xl font-black text-white mt-0.5">{liveMovements.length}</div>
               </div>
               <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
                 <div className="text-[10px] font-bold uppercase text-emerald-400">Depósitos Pend.</div>
@@ -1245,39 +1443,153 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="text-[10px] font-bold uppercase text-purple-400">Saques Pend.</div>
                 <div className="text-xl font-black text-white mt-0.5">{pendingWithdrawalsCount}</div>
               </div>
+              <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
+                <div className="text-[10px] font-bold uppercase text-amber-400">Compras/Vendas/BI</div>
+                <div className="text-xl font-black text-white mt-0.5">{transactions.length}</div>
+              </div>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pt-1 text-xs">
+              {[
+                { id: 'all', label: `Todos (${liveMovements.length})` },
+                { id: 'pendente', label: `Pendentes (${liveMovements.filter(m => m.isPending).length})` },
+                { id: 'deposito', label: `Depósitos (${deposits.length})` },
+                { id: 'saque', label: `Saques (${withdrawals.length})` },
+                { id: 'transacoes', label: 'Compras & Vendas' },
+                { id: 'kyc', label: `BI Pendentes (${pendingKycCount})` },
+                { id: 'revenda', label: 'Revenda & Negociações' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setLiveFilter(tab.id as any)}
+                  className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                    liveFilter === tab.id
+                      ? 'bg-cyan-500 text-neutral-950 font-black'
+                      : 'bg-[#131E3A] text-slate-300 hover:bg-[#1a284c]'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             {/* Activity List */}
-            <div className="space-y-2.5 pt-3">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">Últimos Eventos & Transações:</h3>
-              <div className="divide-y divide-blue-950/60 rounded-2xl bg-[#101935] border border-blue-900/40 overflow-hidden">
-                {liveMovements.map(mov => (
-                  <div key={mov.id} className="p-4 flex items-center justify-between gap-4 hover:bg-white/5 transition-colors">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                        mov.color === 'emerald' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-                        mov.color === 'amber' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
-                        mov.color === 'purple' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
-                        'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                      }`}>
-                        {mov.type === 'deposito' && <Download className="w-4 h-4" />}
-                        {mov.type === 'saque' && <Upload className="w-4 h-4" />}
-                        {mov.type === 'kyc' && <FileText className="w-4 h-4" />}
+            <div className="space-y-2.5 pt-2">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">
+                Registo Completo de Eventos & Transações ({filteredLiveMovements.length}):
+              </h3>
+              {filteredLiveMovements.length === 0 ? (
+                <div className="p-8 text-center rounded-2xl bg-[#101935] border border-blue-900/40 text-xs text-slate-400">
+                  Nenhum movimento registado neste filtro até ao momento.
+                </div>
+              ) : (
+                <div className="divide-y divide-blue-950/60 rounded-2xl bg-[#101935] border border-blue-900/40 overflow-hidden">
+                  {filteredLiveMovements.map(mov => (
+                    <div key={mov.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-white/5 transition-colors">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                          mov.color === 'emerald' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                          mov.color === 'amber' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                          mov.color === 'purple' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
+                          mov.color === 'red' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                          mov.color === 'orange' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
+                          'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                        }`}>
+                          {mov.type === 'deposito' && <Download className="w-4 h-4" />}
+                          {mov.type === 'saque' && <Upload className="w-4 h-4" />}
+                          {mov.type === 'kyc' && <FileText className="w-4 h-4" />}
+                          {mov.type === 'transacao' && <Wallet className="w-4 h-4" />}
+                          {mov.type === 'revenda' && <ShoppingBag className="w-4 h-4" />}
+                          {mov.type === 'negociacao' && <Handshake className="w-4 h-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-white truncate">{mov.title}</span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              mov.statusLabel === 'Sucesso' || mov.statusLabel === 'Ativo'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : mov.statusLabel === 'Pendente'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                            }`}>
+                              {mov.statusLabel}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 truncate mt-0.5">{mov.desc}</div>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-white truncate">{mov.title}</div>
-                        <div className="text-[11px] text-slate-400 truncate">{mov.desc}</div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                        {mov.depositObj && mov.depositObj.status === 'pendente' && (
+                          <div className="flex items-center gap-1.5">
+                            {mov.depositObj.receiptProof && (
+                              <button
+                                type="button"
+                                onClick={() => setZoomedReceipt({ title: `Comprovativo - ${mov.depositObj!.userName}`, src: mov.depositObj!.receiptProof!, deposit: mov.depositObj! })}
+                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px] font-bold cursor-pointer"
+                              >
+                                Talão
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleRejectDeposit(mov.depositObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
+                            >
+                              Recusar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveDeposit(mov.depositObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black cursor-pointer"
+                            >
+                              Aprovar
+                            </button>
+                          </div>
+                        )}
+
+                        {mov.withdrawalObj && mov.withdrawalObj.status === 'pendente' && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleRejectWithdrawal(mov.withdrawalObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
+                            >
+                              Recusar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveWithdrawal(mov.withdrawalObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black cursor-pointer"
+                            >
+                              Aprovar & Debitar
+                            </button>
+                          </div>
+                        )}
+
+                        {mov.kycUser && (
+                          <button
+                            type="button"
+                            onClick={() => handleApproveKYC(mov.kycUser!)}
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black cursor-pointer"
+                          >
+                            Aprovar BI
+                          </button>
+                        )}
+
+                        <div className="text-right">
+                          {mov.amount !== undefined && (
+                            <div className="text-xs font-black text-white tabular-nums">{formatKz(mov.amount)}</div>
+                          )}
+                          <div className="text-[10px] text-slate-500 font-mono">{mov.time}</div>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      {mov.amount !== undefined && (
-                        <div className="text-xs font-black text-white tabular-nums">{formatKz(mov.amount)}</div>
-                      )}
-                      <div className="text-[10px] text-slate-500 font-mono">{mov.time}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2436,7 +2748,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     onClick={() => handleRejectWithdrawal(w)}
                                     className="px-3 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold transition-colors cursor-pointer"
                                   >
-                                    Recusar & Devolver
+                                    Recusar
                                   </button>
                                   <button
                                     type="button"
@@ -2444,15 +2756,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
                                   >
                                     <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                    <span>Confirmar Transferência</span>
+                                    <span>Aprovar e Debitar</span>
                                   </button>
                                 </div>
                               ) : isProcessed ? (
                                 <span className="text-[11px] text-emerald-700 font-bold inline-flex items-center gap-1">
-                                  <Check className="w-3.5 h-3.5" /> Transferência Efetuada
+                                  <Check className="w-3.5 h-3.5" /> Aprovado & Debitado (Sucesso)
                                 </span>
                               ) : (
-                                <span className="text-[11px] text-red-600 font-bold">Recusado & Saldo Devolvido</span>
+                                <span className="text-[11px] text-red-600 font-bold">Recusado (Não debitado)</span>
                               )}
                             </td>
                           </tr>
@@ -2518,7 +2830,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             onClick={() => handleRejectWithdrawal(w)}
                             className="px-4 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-colors cursor-pointer"
                           >
-                            Recusar e Devolver Saldo
+                            Recusar
                           </button>
                           <button
                             type="button"
@@ -2526,7 +2838,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-black transition-colors cursor-pointer shadow-md shadow-purple-600/20 flex items-center gap-1.5"
                           >
                             <Check className="w-4 h-4 stroke-[3]" />
-                            <span>Confirmar Transferência</span>
+                            <span>Aprovar e Debitar</span>
                           </button>
                         </div>
                       )}

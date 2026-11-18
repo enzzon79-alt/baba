@@ -1176,18 +1176,28 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
     }
   };
 
-  // Withdrawal amount: default safely to availableBalance or 500
-  let [b,x]=(0,_.useState)(()=>Math.min(500, e?.availableBalance > 0 ? e.availableBalance : 500));
-
-  (0,_.useEffect)(()=>{
-    if(r==='withdraw'){
-      if(e?.availableBalance > 0){
-        x(e.availableBalance >= 500 ? 500 : e.availableBalance);
-      } else {
-        x(0);
-      }
+  // Withdrawal amount: livre para qualquer valor positivo, sem sobrescrita automática
+  let [withdrawAmountStr, setWithdrawAmountStr] = (0,_.useState)('');
+  let parseWithdrawAmount = (raw: string): number => {
+    let cleaned = String(raw || '').trim().replace(/\s+/g, '');
+    if (!cleaned) return NaN;
+    if (cleaned.includes(',') && cleaned.includes('.')) {
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    } else if (cleaned.includes(',')) {
+      cleaned = cleaned.replace(',', '.');
     }
-  },[r, e?.availableBalance]);
+    return Number(cleaned);
+  };
+  let pendingWithdrawTotal = ze()
+    .filter((wItem: any) => wItem && wItem.userId === t.id && wItem.status === 'pendente')
+    .reduce((acc: number, wItem: any) => acc + (Number(wItem.amount) || 0), 0);
+  let maxWithdrawableBalance = Math.max(0, (e?.availableBalance || 0) - pendingWithdrawTotal);
+  let openWithdrawModal = () => {
+    setWithdrawAmountStr('');
+    O(null);
+    te(null);
+    i('withdraw');
+  };
 
   let [S,C]=(0,_.useState)('Banco Angolano de Investimentos (BAI)');
   let [w,T]=(0,_.useState)('AO06.0040.0000.1234.5678.9012.3');
@@ -1214,7 +1224,7 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
     try{
       let defaultRef = l==='paypay' ? ('PAYPAY-10116-935723248-' + Date.now().toString().slice(-4)) : ('XPRESS-933191188-' + Date.now().toString().slice(-4));
       Ee(t.id, s, l, defaultRef, false, depositReceiptProof);
-      g(`Pedido de depósito de ${F(s)} enviado! O saldo só será creditado na tua carteira após aprovação do Administrador.`);
+      g(`Pedido de depósito de ${F(s)} enviado! Aparecerá no extrato como Pendente e só será creditado após aprovação do Administrador.`);
       setTimeout(()=>{
         i(null);
         g(null);
@@ -1227,17 +1237,22 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
     }
   };
 
-  // Submit Withdrawal: NO restrictive browser step mismatch!
+  // Submit Withdrawal: permite qualquer valor positivo até ao saldo disponível
   let A=ev=>{
     ev.preventDefault();
     O(null);
     te(null);
-    if(!b || isNaN(b) || b <= 0){
-      O('Por favor, introduz um montante válido a levantar superior a 0 Kz.');
+    let numericAmt = parseWithdrawAmount(withdrawAmountStr);
+    if(!numericAmt || isNaN(numericAmt) || numericAmt <= 0){
+      O('Por favor, seleciona ou digita o valor que desejas sacar (superior a 0 Kz).');
       return;
     }
-    if(b > e.availableBalance){
-      O(`Saldo insuficiente. O teu saldo disponível para levantamento é de ${F(e.availableBalance)}.`);
+    if(numericAmt > maxWithdrawableBalance){
+      if(pendingWithdrawTotal > 0 && numericAmt <= e.availableBalance){
+        O(`Já tens ${F(pendingWithdrawTotal)} em saques pendentes de aprovação. Podes sacar até ${F(maxWithdrawableBalance)}.`);
+      } else {
+        O(`Saldo insuficiente. O teu saldo disponível para levantamento é de ${F(e.availableBalance)}.`);
+      }
       return;
     }
     if(!w || !w.trim()){
@@ -1249,12 +1264,13 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
       return;
     }
     try{
-      Oe(t.id, b, S, w, E);
-      te(`Pedido de levantamento de ${F(b)} submetido com sucesso! O valor foi reservado até à liquidação.`);
+      Oe(t.id, numericAmt, w.trim(), S, E.trim());
+      te(`Pedido de saque de ${F(numericAmt)} enviado! Aparecerá no extrato como Pendente e só será debitado e marcado como Sucesso após aprovação do Adm.`);
       setTimeout(()=>{
         i(null);
         te(null);
-      },2200);
+        setWithdrawAmountStr('');
+      },2400);
     }catch(err: any){
       O(err.message||'Erro ao solicitar levantamento');
     }
@@ -1301,7 +1317,7 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
       ]}),
       (0,V.jsxs)('div',{className:'flex flex-wrap items-center gap-2',children:[
         (0,V.jsxs)('button',{type:'button',onClick:openDepositModal,className:'px-4 py-2 bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#e05d00] hover:to-[#e04700] text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer',children:[(0,V.jsx)(lt,{className:'w-4 h-4 text-white'}),(0,V.jsx)('span',{children:'Recarregar Carteira'})]}),
-        (0,V.jsxs)('button',{type:'button',onClick:()=>i('withdraw'),className:'px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer',children:[(0,V.jsx)(Ze,{className:'w-4 h-4'}),(0,V.jsx)('span',{children:'Levantar Dinheiro'})]})
+        (0,V.jsxs)('button',{type:'button',onClick:openWithdrawModal,className:'px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer',children:[(0,V.jsx)(Ze,{className:'w-4 h-4'}),(0,V.jsx)('span',{children:'Levantar Dinheiro'})]})
       ]})
     ]}),
     (0,V.jsxs)('div',{className:'grid grid-cols-1 md:grid-cols-3 gap-5',children:[
@@ -1316,7 +1332,7 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
         ]}),
         (0,V.jsxs)('div',{className:'pt-4 mt-4 border-t border-neutral-800 grid grid-cols-2 gap-2.5',children:[
           (0,V.jsxs)('button',{type:'button',onClick:openDepositModal,className:'py-2.5 px-3 bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#e05d00] text-white text-xs font-black rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer',children:[(0,V.jsx)(lt,{className:'w-3.5 h-3.5 text-white'}),(0,V.jsx)('span',{children:'Recarregar'})]}),
-          (0,V.jsxs)('button',{type:'button',onClick:()=>i('withdraw'),className:'py-2.5 px-3 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-xs font-black rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer',children:[(0,V.jsx)(Ze,{className:'w-3.5 h-3.5'}),(0,V.jsx)('span',{children:'Levantar'})]})
+          (0,V.jsxs)('button',{type:'button',onClick:openWithdrawModal,className:'py-2.5 px-3 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-xs font-black rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer',children:[(0,V.jsx)(Ze,{className:'w-3.5 h-3.5'}),(0,V.jsx)('span',{children:'Levantar'})]})
         ]})
       ]}),
       (0,V.jsxs)('div',{className:'p-6 rounded-2xl bg-white border border-neutral-200 shadow-2xs flex flex-col justify-between space-y-4',children:[
@@ -1396,8 +1412,8 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
             ]})
           ]}),
           (0,V.jsxs)('div',{className:'text-right shrink-0',children:[
-            (0,V.jsxs)('div',{className:`text-base font-extrabold tabular-nums ${t?'text-emerald-600':'text-neutral-900'}`,children:[t?'+':'-',F(e.amount)]}),
-            (0,V.jsx)('span',{className:`inline-block text-[10px] font-bold px-2 py-0.5 rounded ${e.status==='confirmada'?'bg-emerald-100 text-emerald-800':e.status==='pendente'?'bg-amber-100 text-amber-800':'bg-red-100 text-red-800'}`,children:e.status==='confirmada'?'Confirmada':e.status==='pendente'?'Em Processamento':'Rejeitada'})
+            (0,V.jsxs)('div',{className:`text-base font-extrabold tabular-nums ${t?'text-emerald-600':'text-neutral-900'}`,children:[t?'+':'-',F(Math.abs(e.amount))]}),
+            (0,V.jsx)('span',{className:`inline-block text-[10px] font-bold px-2 py-0.5 rounded ${e.status==='confirmada'?'bg-emerald-100 text-emerald-800':e.status==='pendente'?'bg-amber-100 text-amber-800':'bg-red-100 text-red-800'}`,children:e.status==='confirmada'?'Sucesso':e.status==='pendente'?'Pendente':'Recusada'})
           ]})
         ]},e.id);
       })})
@@ -1535,35 +1551,39 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
         (0,V.jsx)('button',{type:'button',onClick:()=>i(null),className:'text-neutral-400 hover:text-white',children:'✕'})
       ]}),
       (0,V.jsxs)('form',{onSubmit:A,noValidate:true,className:'p-5 space-y-4',children:[
-        (0,V.jsx)('div',{className:'p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs',children:(0,V.jsxs)('div',{className:'flex justify-between text-neutral-600',children:[
-          (0,V.jsx)('span',{children:'Saldo disponível para levantamento:'}),
-          (0,V.jsx)('strong',{className:'text-neutral-900 tabular-nums font-black text-sm',children:F(e.availableBalance)})
-        ]})}),
+        (0,V.jsxs)('div',{className:'p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs space-y-1',children:[
+          (0,V.jsxs)('div',{className:'flex justify-between text-neutral-600',children:[
+            (0,V.jsx)('span',{children:'Saldo disponível na conta:'}),
+            (0,V.jsx)('strong',{className:'text-neutral-900 tabular-nums font-black text-sm',children:F(e.availableBalance)})
+          ]}),
+          pendingWithdrawTotal > 0 && (0,V.jsxs)('div',{className:'flex justify-between text-amber-800 font-semibold text-[11px]',children:[
+            (0,V.jsx)('span',{children:'Saques pendentes de aprovação:'}),
+            (0,V.jsx)('span',{className:'tabular-nums',children:F(pendingWithdrawTotal)})
+          ]})
+        ]}),
         (0,V.jsxs)('div',{children:[
-          (0,V.jsx)('label',{className:'text-xs font-bold text-neutral-800 block mb-1',children:'Montante a levantar (Kz):'}),
+          (0,V.jsx)('label',{className:'text-xs font-bold text-neutral-800 block mb-1',children:'Montante a sacar (qualquer valor em Kz):'}),
           (0,V.jsx)('input',{
-            type:'number',
-            value:b===0?'':b,
-            onChange:e=>x(Number(e.target.value)),
-            step:'any',
-            min:'1',
-            placeholder:'Insere o montante a levantar (Kz)',
+            type:'text',
+            inputMode:'decimal',
+            value:withdrawAmountStr,
+            onChange:ev=>{setWithdrawAmountStr(ev.target.value);O(null);},
+            placeholder:'Digita qualquer valor para sacar (ex: 100 ou 2500)',
             className:'w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-base font-bold text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-500'
           }),
           (0,V.jsxs)('div',{className:'flex flex-wrap gap-1.5 mt-2',children:[
-            e.availableBalance > 0 && (0,V.jsxs)('button',{
+            maxWithdrawableBalance > 0 && (0,V.jsxs)('button',{
               type:'button',
-              onClick:()=>x(e.availableBalance),
+              onClick:()=>{setWithdrawAmountStr(String(maxWithdrawableBalance));O(null);},
               className:'px-2.5 py-1 text-[11px] font-bold rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 cursor-pointer transition-colors',
-              children:['Todo o Saldo (',F(e.availableBalance),')']
+              children:['Todo o Saldo (',F(maxWithdrawableBalance),')']
             }),
-            [500, 1000, 5000, 10000, 50000].filter(val=>val<=e.availableBalance).map(val=>(0,V.jsx)('button',{
-              key:val,
+            [50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000].filter(val=>val<=maxWithdrawableBalance).map(val=>(0,V.jsx)('button',{
               type:'button',
-              onClick:()=>x(val),
-              className:'px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border border-neutral-200 cursor-pointer transition-colors',
+              onClick:()=>{setWithdrawAmountStr(String(val));O(null);},
+              className:`px-2.5 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer transition-colors ${parseWithdrawAmount(withdrawAmountStr)===val?'bg-neutral-900 text-amber-400 border-neutral-900':'bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border-neutral-200'}`,
               children:F(val)
-            }))
+            },val))
           ]})
         ]}),
         (0,V.jsxs)('div',{children:[
@@ -1586,8 +1606,8 @@ let H=(listing: any, userProd: any)=>{try{j(listing.id,t.id);l(userProd);d(listi
           (0,V.jsx)('label',{className:'text-xs font-bold text-neutral-800 block mb-1',children:'Nome do Titular da Conta:'}),
           (0,V.jsx)('input',{type:'text',value:E,onChange:e=>D(e.target.value),className:'w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-amber-500'})
         ]}),
-        (0,V.jsxs)('div',{className:'p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-[11px] text-neutral-500 leading-relaxed',children:[
-          'ℹ️ ',(0,V.jsx)('strong',{children:'Segurança e Idempotência:'}),' O montante solicitado será transferido do teu saldo disponível para o ',(0,V.jsx)('em',{children:'saldo reservado'}),' para evitar gastos duplicados enquanto a transferência bancária é processada.'
+        (0,V.jsxs)('div',{className:'p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-950 leading-relaxed',children:[
+          'ℹ️ ',(0,V.jsx)('strong',{children:'Aprovação do Administrador:'}),' O teu pedido de saque aparecerá no extrato como ',(0,V.jsx)('strong',{children:'Pendente'}),'. O valor só será debitado da tua conta e marcado como ',(0,V.jsx)('strong',{children:'Sucesso'}),' após aprovação do Administrador.'
         ]}),
         ne&&(0,V.jsx)('div',{className:'p-2.5 bg-red-50 text-red-700 text-xs rounded-xl border border-red-200 font-semibold',children:ne}),
         ee&&(0,V.jsxs)('div',{className:'p-2.5 bg-emerald-50 text-emerald-800 text-xs rounded-xl border border-emerald-200 flex items-center gap-1.5 font-bold',children:[(0,V.jsx)(ct,{className:'w-4 h-4 text-emerald-600 shrink-0'}),(0,V.jsx)('span',{children:ee})]}),

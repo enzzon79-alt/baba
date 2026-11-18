@@ -246,6 +246,37 @@ async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
   }
 }
 
+function mergeListById<T extends { id: string; createdAt?: string; updatedAt?: string }>(
+  snapDocs: Array<{ id: string; data: () => any }>,
+  localItems: T[],
+  colName: string,
+  sortDesc = true
+): T[] {
+  const map = new Map<string, T>();
+  snapDocs.forEach(d => {
+    const raw = d.data() as T;
+    if (raw) {
+      const id = d.id || raw.id;
+      if (id) map.set(id, { ...raw, id });
+    }
+  });
+  localItems.forEach(item => {
+    if (item && item.id && !map.has(item.id)) {
+      map.set(item.id, item);
+      setDoc(doc(firestore, colName, item.id), cleanForFirestore(item), { merge: true }).catch(() => {});
+    }
+  });
+  const list = Array.from(map.values());
+  if (sortDesc) {
+    list.sort((a, b) => {
+      const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
+      const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
+      return tb - ta;
+    });
+  }
+  return list;
+}
+
 /**
  * Initialize real-time Cloud Firestore listeners on all collections
  */
@@ -253,7 +284,41 @@ export function initDatabase(): void {
   if (isInitialized) return;
   isInitialized = true;
 
-  // Do not force mock user; wait for real login or registration
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', ev => {
+      if (!ev.key) return;
+      let changed = false;
+      if (ev.key === DB_KEYS.USERS) {
+        memoryUsers = loadFromStorage(DB_KEYS.USERS, INITIAL_USERS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.WALLETS) {
+        memoryWallets = loadFromStorage(DB_KEYS.WALLETS, INITIAL_WALLETS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.TRANSACTIONS) {
+        memoryTransactions = loadFromStorage(DB_KEYS.TRANSACTIONS, INITIAL_TRANSACTIONS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.DEPOSITS) {
+        memoryDeposits = loadFromStorage(DB_KEYS.DEPOSITS, INITIAL_DEPOSITS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.WITHDRAWALS) {
+        memoryWithdrawals = loadFromStorage(DB_KEYS.WITHDRAWALS, INITIAL_WITHDRAWALS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.RESALE_LISTINGS) {
+        memoryResaleListings = loadFromStorage(DB_KEYS.RESALE_LISTINGS, INITIAL_RESALE_LISTINGS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.USER_PRODUCTS) {
+        memoryUserProducts = loadFromStorage(DB_KEYS.USER_PRODUCTS, []);
+        changed = true;
+      } else if (ev.key === DB_KEYS.NEGOTIATIONS) {
+        memoryNegotiations = loadFromStorage(DB_KEYS.NEGOTIATIONS, INITIAL_NEGOTIATIONS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.NOTIFICATIONS) {
+        memoryNotifications = loadFromStorage(DB_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+        changed = true;
+      }
+      if (changed) dispatchDbChange();
+    });
+  }
 
   // 1. Subscribe to Firestore Products
   onSnapshot(
@@ -319,8 +384,6 @@ export function initDatabase(): void {
   };
 
   void (async () => {
-    await performOneTimeFirestoreAdminOnlyPurge();
-
     // 2. Subscribe to Firestore Users
     onSnapshot(
       collection(firestore, 'users'),
@@ -343,133 +406,121 @@ export function initDatabase(): void {
       err => console.warn('Users live listener notice:', err.message)
     );
 
-  // 3. Subscribe to Firestore Wallets
-  onSnapshot(
-    collection(firestore, 'wallets'),
-    async snap => {
-      if (snap.empty) {
-        try {
-          const batch = writeBatch(firestore);
-          Object.values(INITIAL_WALLETS).forEach(w => {
-            const ref = doc(firestore, 'wallets', w.userId);
-            batch.set(ref, w);
-          });
-          await batch.commit();
-        } catch (err: any) {
-          console.warn('Seeding wallets note:', err?.message);
-        }
-      } else {
-        const walletsMap: Record<string, Wallet> = {};
-        snap.forEach(d => {
-          const w = d.data() as Wallet;
-          if (
-            (w.availableBalance === 500000 || w.availableBalance === 950000 || w.availableBalance === 5000000) &&
-            (w.totalSpent === 0 || !w.totalSpent)
-          ) {
-            w.availableBalance = 500;
-            w.totalDeposited = 500;
-            setDoc(doc(firestore, 'wallets', w.userId), w, { merge: true }).catch(() => {});
+    // 3. Subscribe to Firestore Wallets
+    onSnapshot(
+      collection(firestore, 'wallets'),
+      async snap => {
+        if (snap.empty) {
+          try {
+            const batch = writeBatch(firestore);
+            Object.values(INITIAL_WALLETS).forEach(w => {
+              const ref = doc(firestore, 'wallets', w.userId);
+              batch.set(ref, w);
+            });
+            await batch.commit();
+          } catch (err: any) {
+            console.warn('Seeding wallets note:', err?.message);
           }
-          walletsMap[w.userId] = w;
-        });
-        memoryWallets = walletsMap;
-        backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+        } else {
+          const walletsMap: Record<string, Wallet> = { ...memoryWallets };
+          snap.forEach(d => {
+            const w = d.data() as Wallet;
+            if (!w) return;
+            const uid = d.id || w.userId;
+            if (
+              (w.availableBalance === 500000 || w.availableBalance === 950000 || w.availableBalance === 5000000) &&
+              (w.totalSpent === 0 || !w.totalSpent)
+            ) {
+              w.availableBalance = 500;
+              w.totalDeposited = 500;
+              setDoc(doc(firestore, 'wallets', uid), w, { merge: true }).catch(() => {});
+            }
+            walletsMap[uid] = { ...w, userId: uid };
+          });
+          memoryWallets = walletsMap;
+          backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+          dispatchDbChange();
+        }
+      },
+      err => console.warn('Wallets live listener notice:', err.message)
+    );
+
+    // 4. Subscribe to Firestore Resale Listings
+    onSnapshot(
+      collection(firestore, 'resale_listings'),
+      snap => {
+        memoryResaleListings = mergeListById<ResaleListing>(snap.docs, memoryResaleListings, 'resale_listings', true);
+        backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
         dispatchDbChange();
-      }
-    },
-    err => console.warn('Wallets live listener notice:', err.message)
-  );
+      },
+      err => console.warn('Listings live listener notice:', err.message)
+    );
 
-  // 4. Subscribe to Firestore Resale Listings
-  onSnapshot(
-    collection(firestore, 'resale_listings'),
-    snap => {
-      const listings: ResaleListing[] = [];
-      snap.forEach(d => listings.push(d.data() as ResaleListing));
-      memoryResaleListings = listings;
-      backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
-      dispatchDbChange();
-    },
-    err => console.warn('Listings live listener notice:', err.message)
-  );
+    // 5. Subscribe to Firestore User Products (Meus Produtos)
+    onSnapshot(
+      collection(firestore, 'user_products'),
+      snap => {
+        memoryUserProducts = mergeListById<UserProduct>(snap.docs, memoryUserProducts, 'user_products', false);
+        backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+        dispatchDbChange();
+      },
+      err => console.warn('User products live listener notice:', err.message)
+    );
 
-  // 5. Subscribe to Firestore User Products (Meus Produtos)
-  onSnapshot(
-    collection(firestore, 'user_products'),
-    snap => {
-      const uProds: UserProduct[] = [];
-      snap.forEach(d => uProds.push(d.data() as UserProduct));
-      memoryUserProducts = uProds;
-      backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
-      dispatchDbChange();
-    },
-    err => console.warn('User products live listener notice:', err.message)
-  );
+    // 6. Subscribe to Firestore Negotiations
+    onSnapshot(
+      collection(firestore, 'negotiations'),
+      snap => {
+        memoryNegotiations = mergeListById<Negotiation>(snap.docs, memoryNegotiations, 'negotiations', true);
+        backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+        dispatchDbChange();
+      },
+      err => console.warn('Negotiations live listener notice:', err.message)
+    );
 
-  // 6. Subscribe to Firestore Negotiations
-  onSnapshot(
-    collection(firestore, 'negotiations'),
-    snap => {
-      const negs: Negotiation[] = [];
-      snap.forEach(d => negs.push(d.data() as Negotiation));
-      memoryNegotiations = negs;
-      backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
-      dispatchDbChange();
-    },
-    err => console.warn('Negotiations live listener notice:', err.message)
-  );
+    // 7. Subscribe to Firestore Notifications
+    onSnapshot(
+      collection(firestore, 'notifications'),
+      snap => {
+        memoryNotifications = mergeListById<Notification>(snap.docs, memoryNotifications, 'notifications', true);
+        backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
+        dispatchDbChange();
+      },
+      err => console.warn('Notifications live listener notice:', err.message)
+    );
 
-  // 7. Subscribe to Firestore Notifications
-  onSnapshot(
-    collection(firestore, 'notifications'),
-    snap => {
-      const notifs: Notification[] = [];
-      snap.forEach(d => notifs.push(d.data() as Notification));
-      memoryNotifications = notifs;
-      backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
-      dispatchDbChange();
-    },
-    err => console.warn('Notifications live listener notice:', err.message)
-  );
+    // 8. Subscribe to Firestore Deposits
+    onSnapshot(
+      collection(firestore, 'deposits'),
+      snap => {
+        memoryDeposits = mergeListById<DepositRequest>(snap.docs, memoryDeposits, 'deposits', true);
+        backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+        dispatchDbChange();
+      },
+      err => console.warn('Deposits live listener notice:', err.message)
+    );
 
-  // 8. Subscribe to Firestore Deposits
-  onSnapshot(
-    collection(firestore, 'deposits'),
-    snap => {
-      const deps: DepositRequest[] = [];
-      snap.forEach(d => deps.push(d.data() as DepositRequest));
-      memoryDeposits = deps;
-      backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
-      dispatchDbChange();
-    },
-    err => console.warn('Deposits live listener notice:', err.message)
-  );
+    // 9. Subscribe to Firestore Withdrawals
+    onSnapshot(
+      collection(firestore, 'withdrawals'),
+      snap => {
+        memoryWithdrawals = mergeListById<WithdrawalRequest>(snap.docs, memoryWithdrawals, 'withdrawals', true);
+        backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+        dispatchDbChange();
+      },
+      err => console.warn('Withdrawals live listener notice:', err.message)
+    );
 
-  // 9. Subscribe to Firestore Withdrawals
-  onSnapshot(
-    collection(firestore, 'withdrawals'),
-    snap => {
-      const withs: WithdrawalRequest[] = [];
-      snap.forEach(d => withs.push(d.data() as WithdrawalRequest));
-      memoryWithdrawals = withs;
-      backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
-      dispatchDbChange();
-    },
-    err => console.warn('Withdrawals live listener notice:', err.message)
-  );
-
-  // 10. Subscribe to Firestore Transactions
-  onSnapshot(
-    collection(firestore, 'transactions'),
-    snap => {
-      const txs: Transaction[] = [];
-      snap.forEach(d => txs.push(d.data() as Transaction));
-      memoryTransactions = txs;
-      backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-      dispatchDbChange();
-    },
-    err => console.warn('Transactions live listener notice:', err.message)
-  );
+    // 10. Subscribe to Firestore Transactions
+    onSnapshot(
+      collection(firestore, 'transactions'),
+      snap => {
+        memoryTransactions = mergeListById<Transaction>(snap.docs, memoryTransactions, 'transactions', true);
+        backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+        dispatchDbChange();
+      },
+      err => console.warn('Transactions live listener notice:', err.message)
+    );
   })();
 }
 
@@ -637,39 +688,23 @@ export async function syncAdminCollectionsFromFirestore(): Promise<void> {
       withTimeout(getDocs(collection(firestore, 'transactions')))
     ]);
 
-    if (depSnap && !depSnap.empty) {
-      const map = new Map<string, DepositRequest>();
-      depSnap.forEach(d => map.set(d.id, d.data() as DepositRequest));
-      memoryDeposits.forEach(ld => { if (ld?.id && !map.has(ld.id)) map.set(ld.id, ld); });
-      memoryDeposits = Array.from(map.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
+    if (depSnap) {
+      memoryDeposits = mergeListById<DepositRequest>(depSnap.docs, memoryDeposits, 'deposits', true);
       backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
     }
 
-    if (wthSnap && !wthSnap.empty) {
-      const map = new Map<string, WithdrawalRequest>();
-      wthSnap.forEach(d => map.set(d.id, d.data() as WithdrawalRequest));
-      memoryWithdrawals.forEach(lw => { if (lw?.id && !map.has(lw.id)) map.set(lw.id, lw); });
-      memoryWithdrawals = Array.from(map.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
+    if (wthSnap) {
+      memoryWithdrawals = mergeListById<WithdrawalRequest>(wthSnap.docs, memoryWithdrawals, 'withdrawals', true);
       backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
     }
 
-    if (listSnap && !listSnap.empty) {
-      const map = new Map<string, ResaleListing>();
-      listSnap.forEach(d => map.set(d.id, d.data() as ResaleListing));
-      memoryResaleListings.forEach(ll => { if (ll?.id && !map.has(ll.id)) map.set(ll.id, ll); });
-      memoryResaleListings = Array.from(map.values());
+    if (listSnap) {
+      memoryResaleListings = mergeListById<ResaleListing>(listSnap.docs, memoryResaleListings, 'resale_listings', true);
       backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
     }
 
-    if (negSnap && !negSnap.empty) {
-      const map = new Map<string, Negotiation>();
-      negSnap.forEach(d => map.set(d.id, d.data() as Negotiation));
-      memoryNegotiations.forEach(ln => { if (ln?.id && !map.has(ln.id)) map.set(ln.id, ln); });
-      memoryNegotiations = Array.from(map.values());
+    if (negSnap) {
+      memoryNegotiations = mergeListById<Negotiation>(negSnap.docs, memoryNegotiations, 'negotiations', true);
       backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
     }
 
@@ -677,19 +712,14 @@ export async function syncAdminCollectionsFromFirestore(): Promise<void> {
       const nextWallets: Record<string, Wallet> = { ...memoryWallets };
       walSnap.forEach(d => {
         const w = d.data() as Wallet;
-        if (w) nextWallets[d.id || w.userId] = w;
+        if (w) nextWallets[d.id || w.userId] = { ...w, userId: d.id || w.userId };
       });
       memoryWallets = nextWallets;
       backupToStorage(DB_KEYS.WALLETS, memoryWallets);
     }
 
-    if (txSnap && !txSnap.empty) {
-      const map = new Map<string, Transaction>();
-      txSnap.forEach(d => map.set(d.id, d.data() as Transaction));
-      memoryTransactions.forEach(lt => { if (lt?.id && !map.has(lt.id)) map.set(lt.id, lt); });
-      memoryTransactions = Array.from(map.values()).sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
+    if (txSnap) {
+      memoryTransactions = mergeListById<Transaction>(txSnap.docs, memoryTransactions, 'transactions', true);
       backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
     }
 
@@ -1529,8 +1559,72 @@ export function getWallet(userId: string): Wallet {
   return wallet;
 }
 
+export function getAllTransactions(): Transaction[] {
+  const byId = new Map<string, Transaction>();
+  memoryTransactions.forEach(tx => {
+    if (tx && tx.id) byId.set(tx.id, tx);
+  });
+
+  // Garantir que todo depósito aparece sempre no extrato/movimentos mesmo em sincronização parcial
+  memoryDeposits.forEach(d => {
+    if (!d || !d.id) return;
+    const txId = `tx_dep_${d.id}`;
+    if (!byId.has(txId)) {
+      const mappedStatus: Transaction['status'] =
+        d.status === 'aprovado' ? 'confirmada' : d.status === 'rejeitado' ? 'recusada' : 'pendente';
+      byId.set(txId, {
+        id: txId,
+        userId: d.userId,
+        userName: d.userName,
+        type: 'carregamento',
+        amount: Number(d.amount) || 0,
+        status: mappedStatus,
+        reference: d.reference || d.id,
+        description:
+          mappedStatus === 'confirmada'
+            ? `Carregamento Aprovado pelo Administrador (${d.reference})`
+            : mappedStatus === 'recusada'
+            ? `Depósito Recusado pelo Administrador (${d.reference})`
+            : `Depósito via ${d.paymentMethod === 'paypay' ? 'PayPay' : 'Multicaixa Express'} — Aguardando aprovação do Adm`,
+        paymentMethod: d.paymentMethod,
+        createdAt: d.createdAt
+      });
+    }
+  });
+
+  // Garantir que todo saque aparece sempre no extrato/movimentos
+  memoryWithdrawals.forEach(w => {
+    if (!w || !w.id) return;
+    const txId = `tx_wth_${w.id}`;
+    if (!byId.has(txId)) {
+      const mappedStatus: Transaction['status'] =
+        w.status === 'processado' ? 'confirmada' : w.status === 'rejeitado' ? 'recusada' : 'pendente';
+      byId.set(txId, {
+        id: txId,
+        userId: w.userId,
+        userName: w.userName,
+        type: 'levantamento',
+        amount: -(Number(w.amount) || 0),
+        status: mappedStatus,
+        reference: `WTH-${w.id.slice(-6)}`,
+        description:
+          mappedStatus === 'confirmada'
+            ? `Saque Aprovado & Debitado — ${w.bankName} (${w.iban})`
+            : mappedStatus === 'recusada'
+            ? `Saque Recusado pelo Administrador (${w.bankName})`
+            : `Saque para ${w.bankName} (${w.iban}) — Aguardando aprovação do Adm`,
+        createdAt: w.createdAt
+      });
+    }
+  });
+
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
 export function getTransactions(userId: string): Transaction[] {
-  return memoryTransactions.filter(t => t.userId === userId);
+  return getAllTransactions().filter(t => t.userId === userId);
 }
 
 export function adjustUserBalance(
@@ -1614,34 +1708,65 @@ export function requestDeposit(
   _autoApprove = false,
   receiptProof?: string
 ): DepositRequest {
+  const numericAmount = Number(amount);
+  if (!numericAmount || isNaN(numericAmount) || numericAmount <= 0) {
+    throw new Error('Por favor, seleciona um montante válido para depósito.');
+  }
+
   const user = getUsers().find(u => u.id === userId);
+  const nowIso = new Date().toISOString();
+  const depositId = `dep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const newDeposit: DepositRequest = {
-    id: `dep_${Date.now()}`,
+    id: depositId,
     userId,
     userName: user ? user.name : 'Cliente',
-    amount,
+    amount: numericAmount,
     paymentMethod,
     reference,
     receiptProof,
     status: 'pendente',
-    createdAt: new Date().toISOString()
+    createdAt: nowIso
   };
 
   memoryDeposits = [newDeposit, ...memoryDeposits];
   backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
 
+  // Registar imediatamente no extrato do utilizador como PENDENTE (não credita saldo até Adm aprovar)
+  const pendingTx: Transaction = {
+    id: `tx_dep_${depositId}`,
+    userId,
+    userName: newDeposit.userName,
+    type: 'carregamento',
+    amount: numericAmount,
+    status: 'pendente',
+    reference,
+    description: `Depósito via ${paymentMethod === 'paypay' ? 'PayPay' : 'Multicaixa Express'} — Aguardando aprovação do Adm`,
+    paymentMethod,
+    createdAt: nowIso
+  };
+  memoryTransactions = [pendingTx, ...memoryTransactions];
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
   createNotification(
     'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
     'Novo Depósito Pendente de Aprovação 💰',
-    `${newDeposit.userName} solicitou um depósito de ${formatMoney(amount)} (Ref: ${reference}). Aprova no Painel do Adm para creditar na carteira.`,
+    `${newDeposit.userName} solicitou um depósito de ${formatMoney(numericAmount)} (Ref: ${reference}). Aprova no Painel do Adm para creditar na carteira.`,
     'sistema',
     'admin',
     newDeposit.id
   );
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'deposits', newDeposit.id), cleanForFirestore(newDeposit)).catch(err =>
-    console.warn('Firestore deposit request note:', err)
+  setDoc(doc(firestore, 'deposits', newDeposit.id), cleanForFirestore(newDeposit)).catch(err => {
+    console.warn('Firestore deposit request note (retrying lightweight copy):', err);
+    const { receiptProof: _bigProof, ...lightweight } = newDeposit;
+    setDoc(
+      doc(firestore, 'deposits', newDeposit.id),
+      cleanForFirestore({ ...lightweight, receiptProof: receiptProof ? '' : undefined })
+    ).catch(() => {});
+  });
+  setDoc(doc(firestore, 'transactions', pendingTx.id), cleanForFirestore(pendingTx)).catch(err =>
+    console.warn('Firestore pending deposit tx note:', err)
   );
 
   return newDeposit;
@@ -1657,22 +1782,36 @@ export function approveDeposit(depositId: string): DepositRequest {
   backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
 
   const wallet = getWallet(deposit.userId);
-  wallet.availableBalance += deposit.amount;
-  wallet.totalDeposited += deposit.amount;
+  wallet.availableBalance += Number(deposit.amount) || 0;
+  wallet.totalDeposited += Number(deposit.amount) || 0;
+  memoryWallets[deposit.userId] = wallet;
   backupToStorage(DB_KEYS.WALLETS, memoryWallets);
 
-  const tx: Transaction = {
-    id: `tx_${Date.now()}`,
-    userId: deposit.userId,
-    userName: deposit.userName,
-    amount: deposit.amount,
-    type: 'carregamento',
-    description: `Carregamento Aprovado pelo Administrador (${deposit.reference})`,
-    status: 'confirmada',
-    reference: deposit.reference,
-    createdAt: new Date().toISOString()
-  };
-  memoryTransactions = [tx, ...memoryTransactions];
+  const linkedTxId = `tx_dep_${depositId}`;
+  const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
+  let finalTx: Transaction;
+  if (txIdx !== -1) {
+    finalTx = {
+      ...memoryTransactions[txIdx],
+      status: 'confirmada',
+      description: `Carregamento Aprovado pelo Administrador (${deposit.reference})`
+    };
+    memoryTransactions[txIdx] = finalTx;
+  } else {
+    finalTx = {
+      id: linkedTxId,
+      userId: deposit.userId,
+      userName: deposit.userName,
+      amount: deposit.amount,
+      type: 'carregamento',
+      description: `Carregamento Aprovado pelo Administrador (${deposit.reference})`,
+      status: 'confirmada',
+      reference: deposit.reference,
+      paymentMethod: deposit.paymentMethod,
+      createdAt: deposit.createdAt || new Date().toISOString()
+    };
+    memoryTransactions = [finalTx, ...memoryTransactions];
+  }
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
   createNotification(
@@ -1690,7 +1829,7 @@ export function approveDeposit(depositId: string): DepositRequest {
   setDoc(doc(firestore, 'wallets', deposit.userId), cleanForFirestore(wallet), { merge: true }).catch(err =>
     console.warn('Firestore wallet credit note:', err)
   );
-  setDoc(doc(firestore, 'transactions', tx.id), cleanForFirestore(tx)).catch(err =>
+  setDoc(doc(firestore, 'transactions', finalTx.id), cleanForFirestore(finalTx), { merge: true }).catch(err =>
     console.warn('Firestore tx save note:', err)
   );
 
@@ -1706,6 +1845,36 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
   deposit.status = 'rejeitado';
   backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
 
+  const linkedTxId = `tx_dep_${depositId}`;
+  const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
+  const rejectedDesc = reason
+    ? `Depósito Recusado (${deposit.reference}): ${reason}`
+    : `Depósito Recusado pelo Administrador (${deposit.reference})`;
+  let finalTx: Transaction;
+  if (txIdx !== -1) {
+    finalTx = {
+      ...memoryTransactions[txIdx],
+      status: 'recusada',
+      description: rejectedDesc
+    };
+    memoryTransactions[txIdx] = finalTx;
+  } else {
+    finalTx = {
+      id: linkedTxId,
+      userId: deposit.userId,
+      userName: deposit.userName,
+      amount: deposit.amount,
+      type: 'carregamento',
+      description: rejectedDesc,
+      status: 'recusada',
+      reference: deposit.reference,
+      paymentMethod: deposit.paymentMethod,
+      createdAt: deposit.createdAt || new Date().toISOString()
+    };
+    memoryTransactions = [finalTx, ...memoryTransactions];
+  }
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
   createNotification(
     deposit.userId,
     'Depósito Recusado pelo Administrador',
@@ -1718,6 +1887,9 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
   setDoc(doc(firestore, 'deposits', depositId), cleanForFirestore(deposit), { merge: true }).catch(err =>
     console.warn('Firestore reject deposit note:', err)
   );
+  setDoc(doc(firestore, 'transactions', finalTx.id), cleanForFirestore(finalTx), { merge: true }).catch(err =>
+    console.warn('Firestore reject deposit tx note:', err)
+  );
 
   return deposit;
 }
@@ -1726,48 +1898,78 @@ export function requestWithdrawal(
   userId: string,
   amount: number,
   iban: string,
-  bankName: string
+  bankName: string,
+  accountHolder?: string
 ): WithdrawalRequest {
-  const wallet = getWallet(userId);
-  if (wallet.availableBalance < amount) {
-    throw new Error('Saldo insuficiente para levantamento.');
+  const numericAmount = Number(amount);
+  if (!numericAmount || isNaN(numericAmount) || numericAmount <= 0) {
+    throw new Error('Por favor, introduz um montante superior a 0 Kz para sacar.');
   }
 
-  wallet.availableBalance -= amount;
-  wallet.pendingBalance += amount;
-  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+  const wallet = getWallet(userId);
+  const pendingWithdrawalsSum = memoryWithdrawals
+    .filter(w => w && w.userId === userId && w.status === 'pendente')
+    .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
+  const withdrawableBalance = Math.max(0, wallet.availableBalance - pendingWithdrawalsSum);
 
+  if (numericAmount > withdrawableBalance) {
+    if (pendingWithdrawalsSum > 0 && numericAmount <= wallet.availableBalance) {
+      throw new Error(
+        `Já tens ${formatMoney(pendingWithdrawalsSum)} em pedidos de saque pendentes de aprovação. Podes sacar até ${formatMoney(withdrawableBalance)}.`
+      );
+    }
+    throw new Error(`Saldo insuficiente. O teu saldo disponível para levantamento é de ${formatMoney(wallet.availableBalance)}.`);
+  }
+
+  // NÃO debita wallet.availableBalance agora — só será debitado quando o Administrador aprovar!
   const user = getUsers().find(u => u.id === userId);
+  const nowIso = new Date().toISOString();
+  const withdrawalId = `wth_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const newWithdrawal: WithdrawalRequest = {
-    id: `wth_${Date.now()}`,
+    id: withdrawalId,
     userId,
     userName: user ? user.name : 'Cliente',
-    amount,
-    bankName,
-    iban,
-    accountHolder: user ? user.name : 'Cliente',
+    amount: numericAmount,
+    bankName: bankName?.trim() || 'Banco em Angola',
+    iban: iban.trim(),
+    accountHolder: accountHolder?.trim() || (user ? user.name : 'Cliente'),
     status: 'pendente',
-    createdAt: new Date().toISOString()
+    createdAt: nowIso
   };
 
   memoryWithdrawals = [newWithdrawal, ...memoryWithdrawals];
   backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
 
+  // Registar imediatamente no extrato do utilizador como PENDENTE (sem debitar ainda)
+  const pendingTx: Transaction = {
+    id: `tx_wth_${withdrawalId}`,
+    userId,
+    userName: newWithdrawal.userName,
+    type: 'levantamento',
+    amount: -numericAmount,
+    status: 'pendente',
+    reference: `WTH-${withdrawalId.slice(-6)}`,
+    description: `Saque para ${newWithdrawal.bankName} (${newWithdrawal.iban}) — Aguardando aprovação do Adm`,
+    createdAt: nowIso
+  };
+  memoryTransactions = [pendingTx, ...memoryTransactions];
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
   createNotification(
     'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
     'Novo Saque Pendente de Aprovação 🏦',
-    `${newWithdrawal.userName} solicitou um levantamento de ${formatMoney(amount)} para ${bankName} (${iban}).`,
+    `${newWithdrawal.userName} solicitou um levantamento de ${formatMoney(numericAmount)} para ${newWithdrawal.bankName} (${newWithdrawal.iban}).`,
     'sistema',
     'admin',
     newWithdrawal.id
   );
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'wallets', userId), cleanForFirestore(wallet), { merge: true }).catch(err =>
-    console.warn('Firestore wallet freeze note:', err)
-  );
   setDoc(doc(firestore, 'withdrawals', newWithdrawal.id), cleanForFirestore(newWithdrawal)).catch(err =>
     console.warn('Firestore withdrawal request note:', err)
+  );
+  setDoc(doc(firestore, 'transactions', pendingTx.id), cleanForFirestore(pendingTx)).catch(err =>
+    console.warn('Firestore pending withdrawal tx note:', err)
   );
 
   return newWithdrawal;
@@ -1782,43 +1984,72 @@ export function processWithdrawal(
   const wth = memoryWithdrawals[idx];
   if (wth.status !== 'pendente') return wth;
 
-  wth.status = status;
-  backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
-
   const wallet = getWallet(wth.userId);
-  if (status === 'processado') {
-    wallet.pendingBalance -= wth.amount;
-    wallet.totalWithdrawn += wth.amount;
+  const linkedTxId = `tx_wth_${withdrawalId}`;
+  const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
+  const isNewNonDebitedFlow = txIdx !== -1 || wallet.pendingBalance < wth.amount;
 
-    const tx: Transaction = {
-      id: `tx_${Date.now()}`,
+  if (status === 'processado') {
+    if (isNewNonDebitedFlow) {
+      if (wallet.availableBalance < wth.amount) {
+        throw new Error(
+          `Saldo insuficiente na conta do utilizador (${formatMoney(wallet.availableBalance)}) para aprovar e debitar ${formatMoney(wth.amount)}.`
+        );
+      }
+      wallet.availableBalance -= wth.amount;
+    } else {
+      wallet.pendingBalance = Math.max(0, wallet.pendingBalance - wth.amount);
+    }
+    wallet.totalWithdrawn += wth.amount;
+  } else {
+    // Rejeitado: se era pedido antigo com pendingBalance congelado, devolve; se novo fluxo, nada foi debitado
+    if (!isNewNonDebitedFlow && wallet.pendingBalance >= wth.amount) {
+      wallet.pendingBalance -= wth.amount;
+      wallet.availableBalance += wth.amount;
+    }
+  }
+
+  wth.status = status;
+  memoryWallets[wth.userId] = wallet;
+  backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+
+  let finalTx: Transaction;
+  if (txIdx !== -1) {
+    finalTx = {
+      ...memoryTransactions[txIdx],
+      status: status === 'processado' ? 'confirmada' : 'recusada',
+      description:
+        status === 'processado'
+          ? `Saque Aprovado & Debitado — ${wth.bankName} (${wth.iban})`
+          : `Saque Recusado pelo Administrador (${wth.bankName})`
+    };
+    memoryTransactions[txIdx] = finalTx;
+  } else {
+    finalTx = {
+      id: linkedTxId,
       userId: wth.userId,
       userName: wth.userName,
       amount: -wth.amount,
       type: 'levantamento',
-      description: `Transferência Concluída para ${wth.bankName} (${wth.iban})`,
-      status: 'confirmada',
+      description:
+        status === 'processado'
+          ? `Saque Aprovado & Debitado — ${wth.bankName} (${wth.iban})`
+          : `Saque Recusado pelo Administrador (${wth.bankName})`,
+      status: status === 'processado' ? 'confirmada' : 'recusada',
       reference: `WTH-${withdrawalId.slice(-6)}`,
-      createdAt: new Date().toISOString()
+      createdAt: wth.createdAt || new Date().toISOString()
     };
-    memoryTransactions = [tx, ...memoryTransactions];
-    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-    setDoc(doc(firestore, 'transactions', tx.id), cleanForFirestore(tx)).catch(err =>
-      console.warn('Firestore tx save note:', err)
-    );
-  } else {
-    // Reverter fundos pendentes
-    wallet.pendingBalance -= wth.amount;
-    wallet.availableBalance += wth.amount;
+    memoryTransactions = [finalTx, ...memoryTransactions];
   }
-  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
   createNotification(
     wth.userId,
-    status === 'processado' ? 'Levantamento Concluído' : 'Levantamento Recusado',
+    status === 'processado' ? 'Levantamento Aprovado & Debitado ✅' : 'Levantamento Recusado ❌',
     status === 'processado'
-      ? `O teu levantamento de ${formatMoney(wth.amount)} foi transferido com sucesso.`
-      : `O teu pedido de levantamento foi recusado e o montante de ${formatMoney(wth.amount)} devolvido ao saldo disponível.`,
+      ? `O teu saque de ${formatMoney(wth.amount)} foi aprovado pelo Administrador, debitado da tua conta e marcado como Sucesso no extrato.`
+      : `O teu pedido de saque de ${formatMoney(wth.amount)} foi recusado pelo Administrador. O teu saldo disponível não foi alterado.`,
     'sistema',
     'carteira'
   );
@@ -1829,6 +2060,9 @@ export function processWithdrawal(
   );
   setDoc(doc(firestore, 'wallets', wth.userId), cleanForFirestore(wallet), { merge: true }).catch(err =>
     console.warn('Firestore wallet update note:', err)
+  );
+  setDoc(doc(firestore, 'transactions', finalTx.id), cleanForFirestore(finalTx), { merge: true }).catch(err =>
+    console.warn('Firestore tx update note:', err)
   );
 
   return wth;

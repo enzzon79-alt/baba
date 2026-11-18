@@ -30,5 +30,8 @@ service cloud.firestore {
     match /withdrawals/{withdrawalId} {
       allow read, write: if true;
     }
+    match /transactions/{transactionId} {
+      allow read, write: if true;
+    }
   }
 }
