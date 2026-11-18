@@ -63,11 +63,19 @@ import {
   getWithdrawals,
   processWithdrawal,
   getResaleListings,
+  getAllResaleListings,
+  approveResaleListing,
+  rejectResaleListing,
   purchaseResaleListing,
   createNegotiation,
   getNegotiations,
+  approveNegotiationProposal,
+  rejectNegotiationProposal,
   sendNegotiationMessage,
   respondBuyerNegotiation,
+  getOrders,
+  approveOrder,
+  rejectOrder,
   getWallet,
   formatKz,
   adjustUserBalance,
@@ -77,7 +85,7 @@ import {
   getAllTransactions,
   DB_STATE_EVENT
 } from '../services/db';
-import { User, DepositRequest, WithdrawalRequest, ResaleListing, Negotiation, Transaction } from '../types';
+import { User, DepositRequest, WithdrawalRequest, ResaleListing, Negotiation, Transaction, Order } from '../types';
 
 export interface BuyerPersona {
   id: string;
@@ -158,9 +166,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [deposits, setDeposits] = useState<DepositRequest[]>(() => getDeposits());
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>(() => getWithdrawals());
   const [resaleListings, setResaleListings] = useState<ResaleListing[]>(() => getResaleListings());
+  const [allResaleListings, setAllResaleListings] = useState<ResaleListing[]>(() => getAllResaleListings());
+  const [orders, setOrders] = useState<Order[]>(() => getOrders());
   const [negotiations, setNegotiations] = useState<Negotiation[]>(() => getNegotiations(currentUser.id));
   const [transactions, setTransactions] = useState<Transaction[]>(() => getAllTransactions());
-  const [liveFilter, setLiveFilter] = useState<'all' | 'pendente' | 'deposito' | 'saque' | 'transacoes' | 'kyc' | 'revenda'>('all');
+  const [liveFilter, setLiveFilter] = useState<'all' | 'pendente' | 'deposito' | 'saque' | 'pedidos' | 'kyc' | 'revenda' | 'transacoes'>('all');
 
   // Local notifications / alerts
   const [actionAlert, setActionAlert] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -196,11 +206,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Reject KYC Modal
   const [rejectingUser, setRejectingUser] = useState<User | null>(null);
   const [rejectionReason, setRejectionReason] = useState('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
+  const [kycRejectionError, setKycRejectionError] = useState<string | null>(null);
 
-  // Reject Movement Modal (Depósitos e Saques)
+  // Reject Movement Modal (Todos os movimentos: Depósitos, Saques, Pedidos, Anúncios e Propostas)
   const [rejectingMovement, setRejectingMovement] = useState<
     | { type: 'deposit'; item: DepositRequest }
     | { type: 'withdrawal'; item: WithdrawalRequest }
+    | { type: 'order'; item: Order }
+    | { type: 'listing'; item: ResaleListing }
+    | { type: 'negotiation'; item: Negotiation }
     | null
   >(null);
   const [movementRejectionReason, setMovementRejectionReason] = useState('');
@@ -240,6 +254,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setDeposits([...getDeposits()]);
     setWithdrawals([...getWithdrawals()]);
     setResaleListings([...getResaleListings()]);
+    setAllResaleListings([...getAllResaleListings()]);
+    setOrders([...getOrders()]);
     setNegotiations([...getNegotiations(currentUser.id)]);
     setTransactions([...getAllTransactions()]);
     if (onRefreshState) onRefreshState();
@@ -294,13 +310,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleConfirmRejectKYC = () => {
     if (!rejectingUser) return;
+    const cleanReason = rejectionReason.trim();
+    if (!cleanReason) {
+      setKycRejectionError('Por favor, escreve o motivo da rejeição do Bilhete de Identidade.');
+      return;
+    }
     try {
-      rejectKYC(rejectingUser.id, rejectionReason.trim() || 'Documentação não conforme');
-      showAlert(`Cadastro de ${rejectingUser.name} rejeitado. O utilizador foi notificado.`, 'error');
+      rejectKYC(rejectingUser.id, cleanReason);
+      showAlert(`Cadastro de ${rejectingUser.name} rejeitado. O utilizador foi notificado com o motivo.`, 'error');
       setRejectingUser(null);
+      setKycRejectionError(null);
       refreshData();
     } catch (err: any) {
-      showAlert(err.message || 'Erro ao rejeitar cadastro.', 'error');
+      setKycRejectionError(err.message || 'Erro ao rejeitar cadastro.');
     }
   };
 
@@ -350,6 +372,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setMovementRejectionError(null);
   };
 
+  // -------------------------------------------------------------
+  // Orders (Compras Oficiais e P2P), Anúncios de Revenda & Propostas
+  // -------------------------------------------------------------
+  const handleApproveOrder = (o: Order) => {
+    try {
+      approveOrder(o.id);
+      showAlert(
+        `Compra de ${formatKz(o.totalAmount)} de ${o.buyerName} aprovada! Saldo debitado e artigo entregue.`,
+        'success'
+      );
+      refreshData();
+    } catch (err: any) {
+      showAlert(err.message || 'Erro ao aprovar pedido de compra.', 'error');
+    }
+  };
+
+  const handleRejectOrder = (o: Order) => {
+    setRejectingMovement({ type: 'order', item: o });
+    setMovementRejectionReason('');
+    setMovementRejectionError(null);
+  };
+
+  const handleApproveListing = (l: ResaleListing) => {
+    try {
+      approveResaleListing(l.id);
+      showAlert(`Anúncio "${l.productName}" de ${l.sellerName} aprovado e publicado no Mercado de Revenda!`, 'success');
+      refreshData();
+    } catch (err: any) {
+      showAlert(err.message || 'Erro ao aprovar anúncio de revenda.', 'error');
+    }
+  };
+
+  const handleRejectListing = (l: ResaleListing) => {
+    setRejectingMovement({ type: 'listing', item: l });
+    setMovementRejectionReason('');
+    setMovementRejectionError(null);
+  };
+
+  const handleApproveNegotiation = (n: Negotiation) => {
+    try {
+      approveNegotiationProposal(n.id);
+      showAlert(`Proposta de ${formatKz(n.currentProposedPrice)} de ${n.buyerName} aprovada e enviada para ${n.sellerName}!`, 'success');
+      refreshData();
+    } catch (err: any) {
+      showAlert(err.message || 'Erro ao aprovar proposta de negociação.', 'error');
+    }
+  };
+
+  const handleRejectNegotiation = (n: Negotiation) => {
+    setRejectingMovement({ type: 'negotiation', item: n });
+    setMovementRejectionReason('');
+    setMovementRejectionError(null);
+  };
+
   const handleConfirmRejectMovement = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rejectingMovement) return;
@@ -363,10 +439,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         const dep = rejectingMovement.item;
         rejectDeposit(dep.id, cleanReason);
         showAlert(`Depósito de ${formatKz(dep.amount)} recusado. Motivo enviado a ${dep.userName}.`, 'error');
-      } else {
+      } else if (rejectingMovement.type === 'withdrawal') {
         const wth = rejectingMovement.item;
         processWithdrawal(wth.id, 'rejeitado', cleanReason);
         showAlert(`Saque de ${formatKz(wth.amount)} recusado. O saldo de ${wth.userName} não foi debitado e o motivo foi registado.`, 'error');
+      } else if (rejectingMovement.type === 'order') {
+        const ord = rejectingMovement.item;
+        rejectOrder(ord.id, cleanReason);
+        showAlert(`Compra de ${formatKz(ord.totalAmount)} recusada. O saldo de ${ord.buyerName} não foi debitado.`, 'error');
+      } else if (rejectingMovement.type === 'listing') {
+        const lst = rejectingMovement.item;
+        rejectResaleListing(lst.id, cleanReason);
+        showAlert(`Anúncio "${lst.productName}" recusado. O artigo regressou ao inventário de ${lst.sellerName}.`, 'error');
+      } else if (rejectingMovement.type === 'negotiation') {
+        const neg = rejectingMovement.item;
+        rejectNegotiationProposal(neg.id, cleanReason);
+        showAlert(`Proposta de ${neg.buyerName} recusada pelo Administrador.`, 'error');
       }
       setRejectingMovement(null);
       setMovementRejectionReason('');
@@ -586,6 +674,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const pendingDepositsCount = useMemo(() => deposits.filter(d => d.status === 'pendente').length, [deposits]);
   const pendingWithdrawalsCount = useMemo(() => withdrawals.filter(w => w.status === 'pendente').length, [withdrawals]);
   const activeUserListings = useMemo(() => resaleListings.filter(l => l.status === 'ativo'), [resaleListings]);
+  const pendingOrdersList = useMemo(() => orders.filter(o => o.status === 'aguardando_aprovacao'), [orders]);
+  const pendingListingsList = useMemo(() => allResaleListings.filter(l => l.status === 'pendente'), [allResaleListings]);
+  const pendingNegotiationsList = useMemo(() => negotiations.filter(n => n.status === 'aguardando_adm'), [negotiations]);
 
   // Filtered lists (prioritiza contas em revisão mais recentes no topo)
   const filteredUsers = useMemo(() => {
@@ -809,12 +900,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const pendingDepositsList = useMemo(() => deposits.filter(d => d.status === 'pendente'), [deposits]);
   const pendingWithdrawalsList = useMemo(() => withdrawals.filter(w => w.status === 'pendente'), [withdrawals]);
+  const pendingKycList = useMemo(() => users.filter(u => u.accountStatus === 'em_processamento'), [users]);
+  const totalAllPendingCount =
+    pendingDepositsList.length +
+    pendingWithdrawalsList.length +
+    pendingKycList.length +
+    pendingOrdersList.length +
+    pendingListingsList.length +
+    pendingNegotiationsList.length;
 
-  // Live movements stream for 'AO VIVO' view (TODOS os movimentos sem corte!)
+  // Live movements stream for 'AO VIVO' view (TODOS os movimentos da plataforma sem exceção!)
   const liveMovements = useMemo(() => {
     const list: Array<{
       id: string;
-      type: 'deposito' | 'saque' | 'kyc' | 'transacao' | 'revenda' | 'negociacao';
+      type: 'deposito' | 'saque' | 'pedido' | 'kyc' | 'transacao' | 'revenda' | 'negociacao';
       title: string;
       desc: string;
       time: string;
@@ -825,6 +924,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       color: 'emerald' | 'amber' | 'purple' | 'cyan' | 'red' | 'orange';
       depositObj?: DepositRequest;
       withdrawalObj?: WithdrawalRequest;
+      orderObj?: Order;
+      listingObj?: ResaleListing;
+      negotiationObj?: Negotiation;
       kycUser?: User;
     }> = [];
 
@@ -864,9 +966,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
     });
 
+    orders.forEach(o => {
+      const ts = new Date(o.createdAt || 0).getTime();
+      const statusLabel =
+        o.status === 'aguardando_aprovacao'
+          ? 'Pendente'
+          : o.status === 'cancelado'
+          ? 'Recusada'
+          : 'Sucesso';
+      const itemSummary = o.items.map(it => `${it.quantity}x ${it.name}${it.selectedColor ? ` (${it.selectedColor})` : ''}`).join(', ');
+      list.push({
+        id: `mov_ord_${o.id}`,
+        type: 'pedido',
+        title: o.source === 'revenda' ? `Compra P2P: ${itemSummary}` : `Compra Oficial: ${itemSummary}`,
+        desc: `Comprador: ${o.buyerName}${o.sellerName ? ` ← Vendedor: ${o.sellerName}` : ''}${o.status === 'cancelado' && o.rejectionReason ? ` • Motivo: ${o.rejectionReason}` : ''}`,
+        time: new Date(o.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        rawTime: isNaN(ts) ? Date.now() : ts,
+        amount: o.totalAmount,
+        statusLabel,
+        isPending: o.status === 'aguardando_aprovacao',
+        color: statusLabel === 'Sucesso' ? 'emerald' : statusLabel === 'Recusada' ? 'red' : 'amber',
+        orderObj: o
+      });
+    });
+
     transactions.forEach(tx => {
-      // Evita duplicar os tx_dep_ / tx_wth_ que já estão listados acima com botões de aprovação
-      if (tx.id.startsWith('tx_dep_') || tx.id.startsWith('tx_wth_')) return;
+      // Evita duplicar os tx_dep_ / tx_wth_ / tx_ord_ que já estão listados acima com botões de aprovação
+      if (tx.id.startsWith('tx_dep_') || tx.id.startsWith('tx_wth_') || tx.id.startsWith('tx_ord_')) return;
       const ts = new Date(tx.createdAt || 0).getTime();
       const statusLabel = tx.status === 'confirmada' ? 'Sucesso' : tx.status === 'recusada' ? 'Recusada' : 'Pendente';
       list.push({
@@ -883,55 +1009,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       });
     });
 
-    users.filter(u => u.accountStatus === 'em_processamento').forEach(u => {
-      const ts = new Date(u.createdAt || 0).getTime();
-      list.push({
-        id: `mov_kyc_${u.id}`,
-        type: 'kyc',
-        title: 'Validação de BI Submetida',
-        desc: `${u.name} • BI: ${u.idNumber} (${u.province || 'Angola'})`,
-        time: u.createdAt ? new Date(u.createdAt).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Recente',
-        rawTime: isNaN(ts) ? Date.now() : ts,
-        statusLabel: 'Pendente',
-        isPending: true,
-        color: 'purple',
-        kycUser: u
+    users
+      .filter(u => u.role !== 'admin')
+      .forEach(u => {
+        const ts = new Date(u.createdAt || 0).getTime();
+        const isPendingKyc = u.accountStatus === 'em_processamento';
+        const isRejectedKyc = u.accountStatus === 'rejeitado';
+        list.push({
+          id: `mov_kyc_${u.id}`,
+          type: 'kyc',
+          title: isPendingKyc ? 'Validação de BI Submetida' : isRejectedKyc ? 'Validação de BI Recusada' : 'Validação de BI Aprovada',
+          desc: `${u.name} • BI: ${u.idNumber} (${u.province || 'Angola'})${isRejectedKyc && u.rejectionReason ? ` • Motivo: ${u.rejectionReason}` : ''}`,
+          time: u.createdAt ? new Date(u.createdAt).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Recente',
+          rawTime: isNaN(ts) ? Date.now() : ts,
+          statusLabel: isPendingKyc ? 'Pendente' : isRejectedKyc ? 'Recusada' : 'Sucesso',
+          isPending: isPendingKyc,
+          color: isRejectedKyc ? 'red' : isPendingKyc ? 'purple' : 'emerald',
+          kycUser: u
+        });
       });
-    });
 
-    resaleListings.forEach(l => {
+    allResaleListings.forEach(l => {
       const ts = new Date(l.createdAt || 0).getTime();
+      const statusLabel =
+        l.status === 'pendente'
+          ? 'Pendente'
+          : l.status === 'rejeitado'
+          ? 'Recusada'
+          : l.status === 'vendido'
+          ? 'Sucesso'
+          : 'Ativo';
       list.push({
         id: `mov_lst_${l.id}`,
         type: 'revenda',
         title: `Anúncio de Revenda: ${l.productName}`,
-        desc: `Vendedor: ${l.sellerName} • Estado: ${l.status}`,
+        desc: `Vendedor: ${l.sellerName} • Preço: ${formatKz(l.listingPrice)}${l.status === 'rejeitado' && l.rejectionReason ? ` • Motivo: ${l.rejectionReason}` : ''}`,
         time: new Date(l.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
         rawTime: isNaN(ts) ? Date.now() : ts,
         amount: l.listingPrice,
-        statusLabel: l.status === 'vendido' ? 'Sucesso' : 'Ativo',
-        color: 'orange'
+        statusLabel,
+        isPending: l.status === 'pendente',
+        color: l.status === 'rejeitado' ? 'red' : l.status === 'pendente' ? 'amber' : 'orange',
+        listingObj: l
       });
     });
 
     negotiations.forEach(n => {
       const ts = new Date(n.updatedAt || n.createdAt || 0).getTime();
+      const isPendingNeg = n.status === 'aguardando_adm';
+      const statusLabel =
+        n.status === 'concluida' || n.status === 'aceite'
+          ? 'Sucesso'
+          : n.status === 'recusada'
+          ? 'Recusada'
+          : isPendingNeg || n.status === 'pendente'
+          ? 'Pendente'
+          : 'Ativo';
       list.push({
         id: `mov_neg_${n.id}`,
         type: 'negociacao',
-        title: `Negociação: ${n.productName}`,
-        desc: `${n.buyerName} ⇄ ${n.sellerName} (${n.status})`,
+        title: `Proposta de Negociação: ${n.productName}`,
+        desc: `${n.buyerName} ⇄ ${n.sellerName} (${isPendingNeg ? 'Aguarda Adm' : n.status})${n.adminRejectionReason ? ` • Motivo: ${n.adminRejectionReason}` : ''}`,
         time: new Date(n.updatedAt || n.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
         rawTime: isNaN(ts) ? Date.now() : ts,
         amount: n.currentProposedPrice,
-        statusLabel: n.status === 'concluida' || n.status === 'aceite' ? 'Sucesso' : n.status === 'recusada' ? 'Recusada' : 'Pendente',
-        color: 'cyan'
+        statusLabel,
+        isPending: isPendingNeg,
+        color: n.status === 'recusada' ? 'red' : isPendingNeg ? 'purple' : 'cyan',
+        negotiationObj: n
       });
     });
 
     list.sort((a, b) => b.rawTime - a.rawTime);
     return list;
-  }, [deposits, withdrawals, transactions, users, resaleListings, negotiations]);
+  }, [deposits, withdrawals, orders, transactions, users, allResaleListings, negotiations]);
 
   const filteredLiveMovements = useMemo(() => {
     return liveMovements.filter(m => {
@@ -939,7 +1090,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (liveFilter === 'pendente') return Boolean(m.isPending);
       if (liveFilter === 'deposito') return m.type === 'deposito';
       if (liveFilter === 'saque') return m.type === 'saque';
-      if (liveFilter === 'transacoes') return m.type === 'transacao';
+      if (liveFilter === 'pedidos') return m.type === 'pedido';
+      if (liveFilter === 'transacoes') return m.type === 'transacao' || m.type === 'pedido';
       if (liveFilter === 'kyc') return m.type === 'kyc';
       if (liveFilter === 'revenda') return m.type === 'revenda' || m.type === 'negociacao';
       return true;
@@ -1301,8 +1453,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* CAIXA DE APROVAÇÃO IMEDIATA: TODOS OS DEPÓSITOS E SAQUES PENDENTES VISÍVEIS LOGO NO TOPO */}
-      {(pendingDepositsList.length > 0 || pendingWithdrawalsList.length > 0) && (
+      {/* CAIXA DE APROVAÇÃO IMEDIATA: TODOS OS MOVIMENTOS PENDENTES DA PLATAFORMA */}
+      {totalAllPendingCount > 0 && (
         <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-amber-50 via-orange-50 to-white border-2 border-amber-400 shadow-lg space-y-4 animate-fadeIn text-neutral-900">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200 pb-3">
             <div className="flex items-center gap-2.5">
@@ -1311,10 +1463,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
               <div>
                 <h2 className="text-sm sm:text-base font-black text-neutral-900">
-                  Movimentos Pendentes para Aprovar ({pendingDepositsList.length + pendingWithdrawalsList.length})
+                  Todos os Movimentos Pendentes para Aprovar ({totalAllPendingCount})
                 </h2>
                 <p className="text-[11px] text-neutral-600">
-                  Nenhum depósito é creditado e nenhum saque é debitado até que aproves aqui ou nos separadores abaixo.
+                  Nenhum depósito, saque, BI, compra, anúncio ou proposta avança sem a tua aprovação ou rejeição com motivo.
                 </p>
               </div>
             </div>
@@ -1401,6 +1553,157 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
             ))}
+
+            {pendingKycList.map(u => (
+              <div key={u.id} className="p-3.5 rounded-2xl bg-white border border-rose-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-black uppercase">Validação de BI</span>
+                    <span className="font-black text-sm text-neutral-900 truncate">{u.name}</span>
+                  </div>
+                  <div className="text-xs text-neutral-600 truncate">
+                    BI: <strong className="font-mono">{u.idNumber}</strong> • {u.province || 'Angola'}
+                  </div>
+                  <div className="text-[11px] font-bold text-rose-600">{u.phone}</div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('kyc'); setKycFilter('em_processamento'); }}
+                    className="px-2.5 py-1.5 rounded-xl bg-neutral-900 text-amber-400 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Ver BI</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRejectingUser(u);
+                      setRejectionReason('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
+                      setKycRejectionError(null);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold cursor-pointer"
+                  >
+                    Recusar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveKYC(u)}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>Aprovar BI</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {pendingOrdersList.map(o => {
+              const itemsText = o.items.map(it => `${it.quantity}x ${it.name}${it.selectedColor ? ` (${it.selectedColor})` : ''}`).join(', ');
+              return (
+                <div key={o.id} className="p-3.5 rounded-2xl bg-white border border-amber-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${o.source === 'revenda' ? 'bg-orange-100 text-orange-800' : 'bg-amber-100 text-amber-900'}`}>
+                        {o.source === 'revenda' ? 'Compra Revenda P2P' : 'Compra Mercado Oficial'}
+                      </span>
+                      <span className="font-black text-sm text-neutral-900 truncate">{o.buyerName}</span>
+                    </div>
+                    <div className="text-xs text-neutral-700 font-semibold truncate">{itemsText}</div>
+                    <div className="text-base font-black text-[#FF6A00] tabular-nums">-{formatKz(o.totalAmount)}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRejectOrder(o)}
+                      className="px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold cursor-pointer"
+                    >
+                      Recusar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApproveOrder(o)}
+                      className="px-3 py-1.5 rounded-xl bg-[#FF6A00] hover:bg-[#e05d00] text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-xs"
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>{o.source === 'revenda' ? 'Aprovar Compra P2P' : 'Aprovar & Entregar'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {pendingListingsList.map(l => (
+              <div key={l.id} className="p-3.5 rounded-2xl bg-white border border-orange-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={l.imageUrl}
+                    alt={l.productName}
+                    referrerPolicy="no-referrer"
+                    className="w-11 h-11 rounded-xl object-cover bg-neutral-100 border border-neutral-200 shrink-0"
+                  />
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-800 text-[10px] font-black uppercase">Anúncio Revenda</span>
+                      <span className="font-black text-sm text-neutral-900 truncate">{l.sellerName}</span>
+                    </div>
+                    <div className="text-xs text-neutral-700 font-semibold truncate">{l.productName}</div>
+                    <div className="text-xs text-neutral-500">
+                      Original: {formatKz(l.originalPrice)} → <strong className="text-orange-700 font-black">{formatKz(l.listingPrice)}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleRejectListing(l)}
+                    className="px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold cursor-pointer"
+                  >
+                    Recusar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveListing(l)}
+                    className="px-3 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>Aprovar Anúncio</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {pendingNegotiationsList.map(n => (
+              <div key={n.id} className="p-3.5 rounded-2xl bg-white border border-indigo-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 text-[10px] font-black uppercase">Proposta P2P</span>
+                    <span className="font-black text-sm text-neutral-900 truncate">{n.buyerName} → {n.sellerName}</span>
+                  </div>
+                  <div className="text-xs text-neutral-700 font-semibold truncate">{n.productName}</div>
+                  <div className="text-xs text-neutral-500">
+                    Anunciado: {formatKz(n.listedPrice)} • Proposta: <strong className="text-indigo-700 font-black">{formatKz(n.currentProposedPrice)}</strong>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleRejectNegotiation(n)}
+                    className="px-2.5 py-1.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold cursor-pointer"
+                  >
+                    Recusar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveNegotiation(n)}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black flex items-center gap-1 cursor-pointer shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>Aprovar Envio</span>
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1448,7 +1751,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
                 <div>
                   <h2 className="text-lg font-black text-white">Todos os Movimentos ao Vivo na Plataforma</h2>
-                  <p className="text-xs text-slate-400">Fluxo completo e em tempo real de depósitos, saques, compras, vendas, validações de BI e negociações.</p>
+                  <p className="text-xs text-slate-400">Fluxo completo e em tempo real de depósitos, saques, compras, anúncios, validações de BI e negociações para aprovação.</p>
                 </div>
               </div>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-500/40 text-xs font-black self-start sm:self-auto">
@@ -1464,16 +1767,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="text-xl font-black text-white mt-0.5">{liveMovements.length}</div>
               </div>
               <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
-                <div className="text-[10px] font-bold uppercase text-emerald-400">Depósitos Pend.</div>
-                <div className="text-xl font-black text-white mt-0.5">{pendingDepositsCount}</div>
+                <div className="text-[10px] font-bold uppercase text-amber-400">Pendentes de Aprovação</div>
+                <div className="text-xl font-black text-white mt-0.5">{totalAllPendingCount}</div>
               </div>
               <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
-                <div className="text-[10px] font-bold uppercase text-purple-400">Saques Pend.</div>
-                <div className="text-xl font-black text-white mt-0.5">{pendingWithdrawalsCount}</div>
+                <div className="text-[10px] font-bold uppercase text-emerald-400">Depósitos / Saques Pend.</div>
+                <div className="text-xl font-black text-white mt-0.5">{pendingDepositsCount} / {pendingWithdrawalsCount}</div>
               </div>
               <div className="p-3.5 rounded-2xl bg-[#131E3A] border border-blue-900/40">
-                <div className="text-[10px] font-bold uppercase text-amber-400">Compras/Vendas/BI</div>
-                <div className="text-xl font-black text-white mt-0.5">{transactions.length}</div>
+                <div className="text-[10px] font-bold uppercase text-cyan-400">Pedidos & BI Pend.</div>
+                <div className="text-xl font-black text-white mt-0.5">{pendingOrdersList.length} / {pendingKycCount}</div>
               </div>
             </div>
 
@@ -1484,9 +1787,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 { id: 'pendente', label: `Pendentes (${liveMovements.filter(m => m.isPending).length})` },
                 { id: 'deposito', label: `Depósitos (${deposits.length})` },
                 { id: 'saque', label: `Saques (${withdrawals.length})` },
-                { id: 'transacoes', label: 'Compras & Vendas' },
-                { id: 'kyc', label: `BI Pendentes (${pendingKycCount})` },
-                { id: 'revenda', label: 'Revenda & Negociações' }
+                { id: 'pedidos', label: `Compras & Pedidos (${orders.length})` },
+                { id: 'kyc', label: `BI (${pendingKycCount} pend.)` },
+                { id: 'revenda', label: `Anúncios & Propostas (${allResaleListings.length + negotiations.length})` }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1527,6 +1830,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         }`}>
                           {mov.type === 'deposito' && <Download className="w-4 h-4" />}
                           {mov.type === 'saque' && <Upload className="w-4 h-4" />}
+                          {mov.type === 'pedido' && <Package className="w-4 h-4" />}
                           {mov.type === 'kyc' && <FileText className="w-4 h-4" />}
                           {mov.type === 'transacao' && <Wallet className="w-4 h-4" />}
                           {mov.type === 'revenda' && <ShoppingBag className="w-4 h-4" />}
@@ -1549,7 +1853,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 flex-wrap">
                         {mov.depositObj && mov.depositObj.status === 'pendente' && (
                           <div className="flex items-center gap-1.5">
                             {mov.depositObj.receiptProof && (
@@ -1597,13 +1901,71 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </div>
                         )}
 
-                        {mov.kycUser && (
+                        {mov.orderObj && mov.orderObj.status === 'aguardando_aprovacao' && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleRejectOrder(mov.orderObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
+                            >
+                              Recusar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveOrder(mov.orderObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-[#FF6A00] hover:bg-[#e05d00] text-white text-[11px] font-black cursor-pointer"
+                            >
+                              Aprovar Compra
+                            </button>
+                          </div>
+                        )}
+
+                        {mov.listingObj && mov.listingObj.status === 'pendente' && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleRejectListing(mov.listingObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
+                            >
+                              Recusar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveListing(mov.listingObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-black cursor-pointer"
+                            >
+                              Aprovar Anúncio
+                            </button>
+                          </div>
+                        )}
+
+                        {mov.negotiationObj && mov.negotiationObj.status === 'aguardando_adm' && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleRejectNegotiation(mov.negotiationObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
+                            >
+                              Recusar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveNegotiation(mov.negotiationObj!)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black cursor-pointer"
+                            >
+                              Aprovar Proposta
+                            </button>
+                          </div>
+                        )}
+
+                        {mov.kycUser && mov.kycUser.accountStatus === 'em_processamento' && (
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
                               onClick={() => {
                                 setRejectingUser(mov.kycUser!);
                                 setRejectionReason('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
+                                setKycRejectionError(null);
                               }}
                               className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
                             >
@@ -3364,6 +3726,77 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
 
+          {/* Fila Pendente do Mercado de Revenda (Anúncios & Propostas P2P) */}
+          {(pendingListingsList.length > 0 || pendingNegotiationsList.length > 0) && (
+            <div className="p-4 sm:p-5 rounded-3xl bg-amber-50 border-2 border-amber-300 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h3 className="text-sm font-black text-amber-950">
+                  Anúncios e Propostas P2P a Aguardar Aprovação ({pendingListingsList.length + pendingNegotiationsList.length})
+                </h3>
+                <span className="text-[11px] font-semibold text-amber-800">
+                  Só ficam visíveis no Mercado após aprovares
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {pendingListingsList.map(l => (
+                  <div key={l.id} className="p-3 rounded-2xl bg-white border border-orange-200 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <img src={l.imageUrl} alt={l.productName} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-black text-neutral-900 truncate">{l.productName}</div>
+                        <div className="text-[11px] text-neutral-600 truncate">
+                          {l.sellerName} • <strong>{formatKz(l.listingPrice)}</strong>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleRejectListing(l)}
+                        className="px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[11px] font-bold hover:bg-red-50 cursor-pointer"
+                      >
+                        Recusar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleApproveListing(l)}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-500 cursor-pointer"
+                      >
+                        Aprovar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {pendingNegotiationsList.map(n => (
+                  <div key={n.id} className="p-3 rounded-2xl bg-white border border-indigo-200 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-neutral-900 truncate">Proposta: {n.productName}</div>
+                      <div className="text-[11px] text-neutral-600 truncate">
+                        {n.buyerName} → {n.sellerName} • <strong>{formatKz(n.currentProposedPrice)}</strong>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleRejectNegotiation(n)}
+                        className="px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[11px] font-bold hover:bg-red-50 cursor-pointer"
+                      >
+                        Recusar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleApproveNegotiation(n)}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[11px] font-black hover:bg-indigo-500 cursor-pointer"
+                      >
+                        Aprovar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Search & Category Filter */}
           <div className="p-4 bg-white rounded-2xl border border-neutral-200/90 shadow-2xs flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
             <div className="relative flex-1 max-w-md">
@@ -4304,7 +4737,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* ======================================================== */}
-      {/* MODAL: MOTIVO DE REJEIÇÃO DE MOVIMENTO (DEPÓSITO / SAQUE) */}
+      {/* MODAL: MOTIVO DE REJEIÇÃO DE MOVIMENTO (TODOS OS MOVIMENTOS) */}
       {/* ======================================================== */}
       {rejectingMovement && (
         <div
@@ -4321,10 +4754,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <XCircle className="w-6 h-6 shrink-0" />
                 <div>
                   <h3 className="text-base font-black text-neutral-900">
-                    {rejectingMovement.type === 'deposit' ? 'Rejeitar Depósito' : 'Rejeitar Levantamento (Saque)'}
+                    {rejectingMovement.type === 'deposit' && 'Rejeitar Depósito'}
+                    {rejectingMovement.type === 'withdrawal' && 'Rejeitar Levantamento (Saque)'}
+                    {rejectingMovement.type === 'order' && 'Rejeitar Pedido de Compra'}
+                    {rejectingMovement.type === 'listing' && 'Rejeitar Anúncio de Revenda'}
+                    {rejectingMovement.type === 'negotiation' && 'Rejeitar Proposta de Negociação'}
                   </h3>
                   <span className="text-[11px] text-neutral-500 block">
-                    Indica o motivo da rejeição para o utilizador
+                    Indica o motivo obrigatório da rejeição para o utilizador
                   </span>
                 </div>
               </div>
@@ -4338,30 +4775,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
 
             <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 text-xs space-y-1">
-              <div className="flex justify-between">
+              <div className="flex justify-between gap-2">
                 <span className="text-neutral-500">Utilizador:</span>
-                <strong className="text-neutral-900">{rejectingMovement.item.userName}</strong>
+                <strong className="text-neutral-900 truncate">
+                  {rejectingMovement.type === 'deposit' && rejectingMovement.item.userName}
+                  {rejectingMovement.type === 'withdrawal' && rejectingMovement.item.userName}
+                  {rejectingMovement.type === 'order' && rejectingMovement.item.buyerName}
+                  {rejectingMovement.type === 'listing' && rejectingMovement.item.sellerName}
+                  {rejectingMovement.type === 'negotiation' && `${rejectingMovement.item.buyerName} → ${rejectingMovement.item.sellerName}`}
+                </strong>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between gap-2">
                 <span className="text-neutral-500">Montante:</span>
-                <strong className="text-red-700 tabular-nums">{formatKz(rejectingMovement.item.amount)}</strong>
+                <strong className="text-red-700 tabular-nums">
+                  {rejectingMovement.type === 'deposit' && formatKz(rejectingMovement.item.amount)}
+                  {rejectingMovement.type === 'withdrawal' && formatKz(rejectingMovement.item.amount)}
+                  {rejectingMovement.type === 'order' && formatKz(rejectingMovement.item.totalAmount)}
+                  {rejectingMovement.type === 'listing' && formatKz(rejectingMovement.item.listingPrice)}
+                  {rejectingMovement.type === 'negotiation' && formatKz(rejectingMovement.item.currentProposedPrice)}
+                </strong>
               </div>
-              {rejectingMovement.type === 'deposit' ? (
-                <div className="flex justify-between">
+              {rejectingMovement.type === 'deposit' && (
+                <div className="flex justify-between gap-2">
                   <span className="text-neutral-500">Referência:</span>
-                  <span className="font-mono text-neutral-700">{rejectingMovement.item.reference}</span>
+                  <span className="font-mono text-neutral-700 truncate">{rejectingMovement.item.reference}</span>
                 </div>
-              ) : (
+              )}
+              {rejectingMovement.type === 'withdrawal' && (
                 <div className="flex justify-between gap-2">
                   <span className="text-neutral-500 shrink-0">IBAN:</span>
                   <span className="font-mono text-neutral-700 truncate">{rejectingMovement.item.iban}</span>
+                </div>
+              )}
+              {(rejectingMovement.type === 'listing' || rejectingMovement.type === 'negotiation') && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-neutral-500 shrink-0">Produto:</span>
+                  <span className="font-semibold text-neutral-800 truncate">{rejectingMovement.item.productName}</span>
+                </div>
+              )}
+              {rejectingMovement.type === 'order' && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-neutral-500 shrink-0">Artigo(s):</span>
+                  <span className="font-semibold text-neutral-800 truncate">
+                    {rejectingMovement.item.items.map(it => `${it.quantity}x ${it.name}`).join(', ')}
+                  </span>
                 </div>
               )}
             </div>
 
             <div className="space-y-2">
               <label className="text-xs font-black text-neutral-900 block">
-                Motivo da Rejeição (será exibido no extrato e notificação):
+                Motivo da Rejeição (será exibido ao utilizador no extrato e notificação):
               </label>
               <textarea
                 value={movementRejectionReason}
@@ -4374,7 +4838,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 placeholder={
                   rejectingMovement.type === 'deposit'
                     ? 'Escreve o motivo da rejeição (ex: comprovativo ilegível, valor divergente...)'
-                    : 'Escreve o motivo da rejeição (ex: IBAN incorreto, titular divergente...)'
+                    : rejectingMovement.type === 'withdrawal'
+                    ? 'Escreve o motivo da rejeição (ex: IBAN incorreto, titular divergente...)'
+                    : rejectingMovement.type === 'order'
+                    ? 'Escreve o motivo da rejeição do pedido de compra...'
+                    : rejectingMovement.type === 'listing'
+                    ? 'Escreve o motivo da recusa do anúncio de revenda...'
+                    : 'Escreve o motivo da recusa da proposta de negociação...'
                 }
                 className="w-full p-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
               />
@@ -4385,10 +4855,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       'Valor transferido diferente do solicitado',
                       'Comprovativo inválido ou já utilizado'
                     ]
-                  : [
+                  : rejectingMovement.type === 'withdrawal'
+                  ? [
                       'IBAN incorreto ou incompleto',
                       'Nome do titular diferente da conta BABA',
                       'Dados bancários incompatíveis para transferência'
+                    ]
+                  : rejectingMovement.type === 'order'
+                  ? [
+                      'Compra cancelada após verificação administrativa',
+                      'Artigo indisponível no momento da conferência',
+                      'Necessária confirmação adicional de saldo'
+                    ]
+                  : rejectingMovement.type === 'listing'
+                  ? [
+                      'Preço de revenda fora dos parâmetros da plataforma',
+                      'Descrição inadequada para publicação no mercado',
+                      'Artigo requer revisão antes de publicar'
+                    ]
+                  : [
+                      'Valor proposto abaixo do limite aceitável',
+                      'Proposta recusada pela moderação administrativa'
                     ]
                 ).map(preset => (
                   <button
@@ -4456,20 +4943,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             <div>
               <label className="text-xs font-bold text-neutral-800 block mb-1">
-                Motivo da Recusa:
+                Motivo da Recusa (obrigatório):
               </label>
               <textarea
                 value={rejectionReason}
-                onChange={e => setRejectionReason(e.target.value)}
+                onChange={e => {
+                  setRejectionReason(e.target.value);
+                  setKycRejectionError(null);
+                }}
                 rows={3}
                 className="w-full p-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>
 
+            {kycRejectionError && (
+              <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs font-bold text-red-700">
+                {kycRejectionError}
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setRejectingUser(null)}
+                onClick={() => {
+                  setRejectingUser(null);
+                  setKycRejectionError(null);
+                }}
                 className="px-4 py-2 border border-neutral-300 text-neutral-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-neutral-50"
               >
                 Cancelar

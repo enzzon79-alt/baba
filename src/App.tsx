@@ -187,6 +187,9 @@ import {
   updateProduct as ge,
   getUserProducts as _e,
   getResaleListings as ve,
+  getAllResaleListings as veAll,
+  getSpendableBalance as getLivre,
+  getPendingReservedAmount as getReservado,
   createResaleListing as ye,
   cancelResaleListing as j,
   getNegotiations as M,
@@ -698,7 +701,7 @@ tn = ({ activeTab: e, setActiveTab: t, userRole: n, isAdmin: isAdmProp, unreadCo
   );
 };
 BottomNavBar = tn;
-nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)(1),[o,s]=(0,_.useState)(0),[c,l]=(0,_.useState)(!1),[chosenColor,setChosenColor]=(0,_.useState)(()=>e?.selectedColor||'Preto');(0,_.useEffect)(()=>{if(e)setChosenColor(e.selectedColor||'Preto')},[e]);if(!e)return null;let u=e.suggestedResalePrice||Math.round(e.officialPrice*1.4),d=u-e.officialPrice,f=d*i,p=e.officialPrice*i,m=e.gallery&&e.gallery.length>0?[e.imageUrl,...e.gallery]:[e.imageUrl];return(0,V.jsx)(`div`,{className:`fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn`,children:(0,V.jsxs)(`div`,{className:`bg-white rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl border border-neutral-200 my-auto text-neutral-900 relative max-h-[92vh] flex flex-col`,onClick:e=>e.stopPropagation(),children:[(0,V.jsxs)(`div`,{className:`px-6 py-3.5 bg-neutral-900 text-white flex items-center justify-between border-b border-neutral-800 shrink-0`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2 text-xs`,children:[(0,V.jsx)(`span`,{className:`px-2 py-0.5 rounded bg-[#FF6A00] text-white font-black text-[10px] tracking-wider uppercase`,children:`BABA Trade Assurance`}),(0,V.jsx)(`span`,{className:`text-neutral-400 hidden sm:inline`,children:`· Fornecedor Verificado Ouro 5 Anos`})]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsxs)(`button`,{onClick:()=>{navigator.clipboard?.writeText(window.location.href),l(!0),setTimeout(()=>l(!1),2e3)},className:`p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors text-xs flex items-center gap-1`,title:`Copiar ligação`,children:[(0,V.jsx)(Nt,{className:`w-4 h-4`}),(0,V.jsx)(`span`,{className:`hidden sm:inline`,children:c?`Copiado!`:`Partilhar`})]}),(0,V.jsx)(`button`,{onClick:t,className:`p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors`,children:(0,V.jsx)(Zt,{className:`w-5 h-5`})})]})]}),(0,V.jsx)(`div`,{className:`p-6 overflow-y-auto space-y-6`,children:(0,V.jsxs)(`div`,{className:`grid grid-cols-1 md:grid-cols-12 gap-8 items-start`,children:[(0,V.jsxs)(`div`,{className:`md:col-span-5 space-y-3`,children:[(0,V.jsxs)(`div`,{className:`relative aspect-square rounded-2xl overflow-hidden bg-neutral-100 border border-neutral-200 shadow-inner group`,children:[(0,V.jsx)(`img`,{src:m[o]||e.imageUrl,alt:e.name,referrerPolicy:`no-referrer`,onError:e=>{e.currentTarget.onerror=null;e.currentTarget.src='https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80';},className:`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105`}),(0,V.jsxs)(`span`,{className:`absolute top-3 left-3 px-2.5 py-1 rounded-md bg-neutral-950/80 text-white text-[11px] font-bold backdrop-blur-xs flex items-center gap-1`,children:[(0,V.jsx)(R,{className:`w-3.5 h-3.5 text-amber-400`}),`Foto Original`]})]}),m.length>1&&(0,V.jsx)(`div`,{className:`flex items-center gap-2 overflow-x-auto pb-1`,children:m.map((e,t)=>(0,V.jsx)(`button`,{onClick:()=>s(t),className:`w-16 h-16 rounded-xl overflow-hidden border-2 transition-all shrink-0 ${o===t?`border-[#FF6A00] ring-2 ring-orange-200`:`border-neutral-200 opacity-70 hover:opacity-100`}`,children:(0,V.jsx)(`img`,{src:e,alt:`Miniatura`,className:`w-full h-full object-cover`})},t))}),(0,V.jsxs)(`div`,{className:`p-4 rounded-xl bg-orange-50/60 border border-orange-200 text-neutral-800 space-y-2 text-xs`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2 font-bold text-[#FF5000]`,children:[(0,V.jsx)(et,{className:`w-4 h-4`}),(0,V.jsx)(`span`,{children:e.supplierName||`Hub Oficial BABA Angola (Fornecedor Verificado)`})]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-3 text-neutral-600 text-[11px]`,children:[(0,V.jsxs)(`span`,{className:`flex items-center gap-1 text-amber-600 font-semibold`,children:[(0,V.jsx)(Rt,{className:`w-3.5 h-3.5 fill-amber-400 text-amber-400`}),e.supplierRating||`4.9`,` / 5.0`]}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsxs)(`span`,{children:[`Taxa de Resposta: `,(0,V.jsx)(`strong`,{children:`99.8%`})]}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsxs)(`span`,{children:[`Envio a Tempo: `,(0,V.jsx)(`strong`,{children:`100%`})]})]})]})]}),(0,V.jsxs)(`div`,{className:`md:col-span-7 space-y-5`,children:[(0,V.jsxs)(`div`,{children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2 text-xs font-semibold text-neutral-500 mb-1`,children:[(0,V.jsxs)(`span`,{children:[`Marca: `,(0,V.jsx)(`strong`,{className:`text-neutral-900`,children:e.brand})]}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsxs)(`span`,{children:[`Ref: `,(0,V.jsx)(`code`,{className:`text-neutral-700 bg-neutral-100 px-1 py-0.5 rounded`,children:e.id})]})]}),(0,V.jsx)(`h1`,{className:`text-xl sm:text-2xl font-black text-neutral-950 leading-snug`,children:e.name})]}),(0,V.jsxs)(`div`,{className:`p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-3`,children:[(0,V.jsxs)(`div`,{className:`flex items-baseline justify-between`,children:[(0,V.jsxs)(`div`,{children:[(0,V.jsx)(`span`,{className:`text-[11px] font-bold uppercase tracking-wider text-neutral-500 block`,children:`Preço de Compra (Atacado BABA)`}),(0,V.jsx)(`div`,{className:`text-3xl font-black text-[#FF6A00] tabular-nums`,children:F(e.officialPrice)})]}),(0,V.jsxs)(`div`,{className:`text-right`,children:[(0,V.jsx)(`span`,{className:`text-[11px] font-semibold text-neutral-500 block`,children:`MOQ (Qtd. Mínima)`}),(0,V.jsx)(`span`,{className:`text-xs font-bold text-neutral-800 bg-white px-2 py-1 rounded border border-neutral-200 inline-block`,children:e.moq||`1 unidade`})]})]}),(0,V.jsxs)(`div`,{className:`p-3 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-emerald-950 space-y-2`,children:[(0,V.jsxs)(`div`,{className:`flex items-center justify-between text-xs font-extrabold text-emerald-800`,children:[(0,V.jsxs)(`span`,{className:`flex items-center gap-1.5`,children:[(0,V.jsx)(Ht,{className:`w-4 h-4 text-emerald-600`}),`Margem Estimada de Revenda:`]}),(0,V.jsxs)(`span`,{className:`text-sm font-black text-emerald-700`,children:[`+`,F(d),` por unidade`]})]}),(0,V.jsxs)(`p`,{className:`text-[11px] text-emerald-800 leading-relaxed`,children:[`💡 `,(0,V.jsx)(`strong`,{children:`Modelo de Revenda BABA:`}),` Podes comprar este produto a `,(0,V.jsx)(`strong`,{children:F(e.officialPrice)}),` e revendê-lo no Mercado de Revenda pelo valor sugerido de `,(0,V.jsx)(`strong`,{children:F(u)}),` ou pelo preço que definires, obtendo lucro garantido!`]})]})]}),(0,V.jsxs)(`div`,{className:`space-y-2 text-xs border-y border-neutral-200 py-3 text-neutral-700`,children:[(0,V.jsxs)(`div`,{className:`flex items-center justify-between`,children:[(0,V.jsx)(`span`,{className:`text-neutral-500`,children:`Stock Disponível para Compra:`}),(0,V.jsxs)(`span`,{className:`font-bold text-emerald-700 flex items-center gap-1`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5 text-emerald-600`}),e.stock,` unidades disponíveis no sistema`]})]}),(0,V.jsxs)(`div`,{className:`flex items-start justify-between gap-4`,children:[(0,V.jsx)(`span`,{className:`text-neutral-500 shrink-0`,children:`Transferência de Titularidade:`}),(0,V.jsx)(`span`,{className:`font-bold text-neutral-900 text-right`,children:`Instantânea para "Meus Produtos"`})]}),(0,V.jsxs)(`div`,{className:`p-2.5 rounded-lg bg-orange-50/80 border border-orange-200/80 text-[11px] text-orange-950 space-y-1`,children:[(0,V.jsxs)(`div`,{className:`font-bold flex items-center gap-1 text-[#FF6A00]`,children:[(0,V.jsx)(R,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Ciclo de Compra e Revenda 100% Interno:`})]}),(0,V.jsx)(`p`,{children:`Todo o processo acontece dentro da plataforma. Ao comprar, o artigo fica sob a sua titularidade e pode colocá-lo à venda por um preço superior para outro utilizador comprar e obter o seu lucro. A plataforma não realiza entregas físicas nem recomenda compras externas.`})]})]}),(0,V.jsxs)(`div`,{className:`p-3 rounded-xl bg-neutral-50 border border-neutral-200 space-y-2`,children:[(0,V.jsxs)(`div`,{className:`flex items-center justify-between text-xs`,children:[(0,V.jsxs)(`span`,{className:`font-bold text-neutral-800 flex items-center gap-1.5`,children:[(0,V.jsx)(`span`,{children:`🎨 Escolha a Cor:`}),(0,V.jsx)(`strong`,{className:`text-[#FF6A00] font-black`,children:chosenColor})]}),(0,V.jsx)(`span`,{className:`text-[10px] font-bold text-neutral-500 bg-white px-2 py-0.5 rounded border border-neutral-200`,children:`8 Opções Disponíveis`})]}),(0,V.jsx)(`div`,{className:`grid grid-cols-4 sm:grid-cols-8 gap-1.5 pt-0.5`,children:PRODUCT_8_COLORS.map(c=>{let isSel=chosenColor===c.name;return(0,V.jsxs)(`button`,{key:c.name,type:`button`,onClick:()=>setChosenColor(c.name),className:`p-1.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${isSel?`border-[#FF6A00] bg-orange-50 ring-2 ring-orange-200 shadow-xs`:`border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50`}`,children:[(0,V.jsx)(`span`,{className:`w-5 h-5 rounded-full border shadow-2xs shrink-0 inline-block`,style:{backgroundColor:c.hex,borderColor:c.border}}),(0,V.jsx)(`span`,{className:`text-[9px] font-bold truncate max-w-full ${isSel?`text-[#FF6A00]`:`text-neutral-700`}`,children:c.name})]})})})]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-4`,children:[(0,V.jsx)(`span`,{className:`text-xs font-bold text-neutral-700`,children:`Quantidade:`}),(0,V.jsxs)(`div`,{className:`flex items-center border border-neutral-300 rounded-lg overflow-hidden bg-white`,children:[(0,V.jsx)(`button`,{onClick:()=>a(Math.max(1,i-1)),className:`px-3 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-sm transition-colors`,children:`-`}),(0,V.jsx)(`span`,{className:`px-4 py-1 text-sm font-bold text-neutral-900 min-w-[36px] text-center`,children:i}),(0,V.jsx)(`button`,{onClick:()=>a(Math.min(e.stock,i+1)),className:`px-3 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-sm transition-colors`,children:`+`})]}),i>1&&(0,V.jsxs)(`span`,{className:`text-xs text-neutral-500`,children:[`Total: `,(0,V.jsx)(`strong`,{className:`text-neutral-900`,children:F(p)}),` (Lucro potencial: `,(0,V.jsxs)(`strong`,{className:`text-emerald-700`,children:[`+`,F(f)]}),`)`]})]}),(0,V.jsxs)(`div`,{className:`pt-2 flex flex-col sm:flex-row gap-3`,children:[(0,V.jsxs)(`button`,{onClick:()=>{for(let t=0;t<i;t++)n({...e,selectedColor:chosenColor});t()},disabled:e.stock<=0,className:`flex-1 py-3 px-4 rounded-xl border-2 border-[#FF6A00] text-[#FF6A00] hover:bg-orange-50 text-xs sm:text-sm font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50`,children:[(0,V.jsx)(z,{className:`w-4 h-4`}),(0,V.jsxs)(`span`,{children:[`Adicionar ao Carrinho (`,i,`)`]})]}),(0,V.jsxs)(`button`,{onClick:()=>{for(let t=0;t<i;t++)n({...e,selectedColor:chosenColor});r({...e,selectedColor:chosenColor}),t()},disabled:e.stock<=0,className:`flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white text-xs sm:text-sm font-black transition-all shadow-md shadow-orange-500/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50`,children:[(0,V.jsxs)(`span`,{children:[`Comprar Agora (`,F(p),`)`]}),(0,V.jsx)(Ye,{className:`w-4 h-4`})]})]}),(0,V.jsxs)(`div`,{className:`pt-3 border-t border-neutral-100 space-y-2`,children:[(0,V.jsx)(`h3`,{className:`text-xs font-bold uppercase tracking-wider text-neutral-500`,children:`Descrição & Especificações Oficiais`}),(0,V.jsx)(`p`,{className:`text-xs text-neutral-700 leading-relaxed`,children:e.description}),e.features&&e.features.length>0&&(0,V.jsx)(`ul`,{className:`grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-2`,children:e.features.map((e,t)=>(0,V.jsxs)(`li`,{className:`text-xs text-neutral-600 flex items-center gap-1.5`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5 text-amber-500 shrink-0`}),(0,V.jsx)(`span`,{children:e})]},t))})]})]})]})})]})})},rn=({products:e,currentUser:n,onNavigateTab:i,onAddToCart:a,onDirectBuy:o,initialCategory:s,searchQuery:c=``})=>{
+nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)(1),[o,s]=(0,_.useState)(0),[c,l]=(0,_.useState)(!1),[chosenColor,setChosenColor]=(0,_.useState)(()=>e?.selectedColor||'Preto');(0,_.useEffect)(()=>{if(e)setChosenColor(e.selectedColor||'Preto')},[e]);if(!e)return null;let u=e.suggestedResalePrice||Math.round(e.officialPrice*1.4),d=u-e.officialPrice,f=d*i,p=e.officialPrice*i,m=e.gallery&&e.gallery.length>0?[e.imageUrl,...e.gallery]:[e.imageUrl];return(0,V.jsx)(`div`,{className:`fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn`,children:(0,V.jsxs)(`div`,{className:`bg-white rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl border border-neutral-200 my-auto text-neutral-900 relative max-h-[92vh] flex flex-col`,onClick:e=>e.stopPropagation(),children:[(0,V.jsxs)(`div`,{className:`px-6 py-3.5 bg-neutral-900 text-white flex items-center justify-between border-b border-neutral-800 shrink-0`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2 text-xs`,children:[(0,V.jsx)(`span`,{className:`px-2 py-0.5 rounded bg-[#FF6A00] text-white font-black text-[10px] tracking-wider uppercase`,children:`BABA Trade Assurance`}),(0,V.jsx)(`span`,{className:`text-neutral-400 hidden sm:inline`,children:`· Fornecedor Verificado Ouro 5 Anos`})]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsxs)(`button`,{onClick:()=>{navigator.clipboard?.writeText(window.location.href),l(!0),setTimeout(()=>l(!1),2e3)},className:`p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors text-xs flex items-center gap-1`,title:`Copiar ligação`,children:[(0,V.jsx)(Nt,{className:`w-4 h-4`}),(0,V.jsx)(`span`,{className:`hidden sm:inline`,children:c?`Copiado!`:`Partilhar`})]}),(0,V.jsx)(`button`,{onClick:t,className:`p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors`,children:(0,V.jsx)(Zt,{className:`w-5 h-5`})})]})]}),(0,V.jsx)(`div`,{className:`p-6 overflow-y-auto space-y-6`,children:(0,V.jsxs)(`div`,{className:`grid grid-cols-1 md:grid-cols-12 gap-8 items-start`,children:[(0,V.jsxs)(`div`,{className:`md:col-span-5 space-y-3`,children:[(0,V.jsxs)(`div`,{className:`relative aspect-square rounded-2xl overflow-hidden bg-neutral-100 border border-neutral-200 shadow-inner group`,children:[(0,V.jsx)(`img`,{src:m[o]||e.imageUrl,alt:e.name,referrerPolicy:`no-referrer`,onError:e=>{e.currentTarget.onerror=null;e.currentTarget.src='https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80';},className:`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105`}),(0,V.jsxs)(`span`,{className:`absolute top-3 left-3 px-2.5 py-1 rounded-md bg-neutral-950/80 text-white text-[11px] font-bold backdrop-blur-xs flex items-center gap-1`,children:[(0,V.jsx)(R,{className:`w-3.5 h-3.5 text-amber-400`}),`Foto Original`]})]}),m.length>1&&(0,V.jsx)(`div`,{className:`flex items-center gap-2 overflow-x-auto pb-1`,children:m.map((e,t)=>(0,V.jsx)(`button`,{onClick:()=>s(t),className:`w-16 h-16 rounded-xl overflow-hidden border-2 transition-all shrink-0 ${o===t?`border-[#FF6A00] ring-2 ring-orange-200`:`border-neutral-200 opacity-70 hover:opacity-100`}`,children:(0,V.jsx)(`img`,{src:e,alt:`Miniatura`,className:`w-full h-full object-cover`})},t))}),(0,V.jsxs)(`div`,{className:`p-4 rounded-xl bg-orange-50/60 border border-orange-200 text-neutral-800 space-y-2 text-xs`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2 font-bold text-[#FF5000]`,children:[(0,V.jsx)(et,{className:`w-4 h-4`}),(0,V.jsx)(`span`,{children:e.supplierName||`Hub Oficial BABA Angola (Fornecedor Verificado)`})]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-3 text-neutral-600 text-[11px]`,children:[(0,V.jsxs)(`span`,{className:`flex items-center gap-1 text-amber-600 font-semibold`,children:[(0,V.jsx)(Rt,{className:`w-3.5 h-3.5 fill-amber-400 text-amber-400`}),e.supplierRating||`4.9`,` / 5.0`]}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsxs)(`span`,{children:[`Taxa de Resposta: `,(0,V.jsx)(`strong`,{children:`99.8%`})]}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsxs)(`span`,{children:[`Envio a Tempo: `,(0,V.jsx)(`strong`,{children:`100%`})]})]})]})]}),(0,V.jsxs)(`div`,{className:`md:col-span-7 space-y-5`,children:[(0,V.jsxs)(`div`,{children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2 text-xs font-semibold text-neutral-500 mb-1`,children:[(0,V.jsxs)(`span`,{children:[`Marca: `,(0,V.jsx)(`strong`,{className:`text-neutral-900`,children:e.brand})]}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsxs)(`span`,{children:[`Ref: `,(0,V.jsx)(`code`,{className:`text-neutral-700 bg-neutral-100 px-1 py-0.5 rounded`,children:e.id})]})]}),(0,V.jsx)(`h1`,{className:`text-xl sm:text-2xl font-black text-neutral-950 leading-snug`,children:e.name})]}),(0,V.jsxs)(`div`,{className:`p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-3`,children:[(0,V.jsxs)(`div`,{className:`flex items-baseline justify-between`,children:[(0,V.jsxs)(`div`,{children:[(0,V.jsx)(`span`,{className:`text-[11px] font-bold uppercase tracking-wider text-neutral-500 block`,children:`Preço de Compra (Atacado BABA)`}),(0,V.jsx)(`div`,{className:`text-3xl font-black text-[#FF6A00] tabular-nums`,children:F(e.officialPrice)})]}),(0,V.jsxs)(`div`,{className:`text-right`,children:[(0,V.jsx)(`span`,{className:`text-[11px] font-semibold text-neutral-500 block`,children:`MOQ (Qtd. Mínima)`}),(0,V.jsx)(`span`,{className:`text-xs font-bold text-neutral-800 bg-white px-2 py-1 rounded border border-neutral-200 inline-block`,children:e.moq||`1 unidade`})]})]}),(0,V.jsxs)(`div`,{className:`p-3 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-emerald-950 space-y-2`,children:[(0,V.jsxs)(`div`,{className:`flex items-center justify-between text-xs font-extrabold text-emerald-800`,children:[(0,V.jsxs)(`span`,{className:`flex items-center gap-1.5`,children:[(0,V.jsx)(Ht,{className:`w-4 h-4 text-emerald-600`}),`Margem Estimada de Revenda:`]}),(0,V.jsxs)(`span`,{className:`text-sm font-black text-emerald-700`,children:[`+`,F(d),` por unidade`]})]}),(0,V.jsxs)(`p`,{className:`text-[11px] text-emerald-800 leading-relaxed`,children:[`💡 `,(0,V.jsx)(`strong`,{children:`Modelo de Revenda BABA:`}),` Podes comprar este produto a `,(0,V.jsx)(`strong`,{children:F(e.officialPrice)}),` e revendê-lo no Mercado de Revenda pelo valor sugerido de `,(0,V.jsx)(`strong`,{children:F(u)}),` ou pelo preço que definires, obtendo lucro garantido!`]})]})]}),(0,V.jsxs)(`div`,{className:`space-y-2 text-xs border-y border-neutral-200 py-3 text-neutral-700`,children:[(0,V.jsxs)(`div`,{className:`flex items-center justify-between`,children:[(0,V.jsx)(`span`,{className:`text-neutral-500`,children:`Stock Disponível para Compra:`}),(0,V.jsxs)(`span`,{className:`font-bold text-emerald-700 flex items-center gap-1`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5 text-emerald-600`}),e.stock,` unidades disponíveis no sistema`]})]}),(0,V.jsxs)(`div`,{className:`flex items-start justify-between gap-4`,children:[(0,V.jsx)(`span`,{className:`text-neutral-500 shrink-0`,children:`Transferência de Titularidade:`}),(0,V.jsx)(`span`,{className:`font-bold text-neutral-900 text-right`,children:`Após Aprovação do Administrador`})]}),(0,V.jsxs)(`div`,{className:`p-2.5 rounded-lg bg-orange-50/80 border border-orange-200/80 text-[11px] text-orange-950 space-y-1`,children:[(0,V.jsxs)(`div`,{className:`font-bold flex items-center gap-1 text-[#FF6A00]`,children:[(0,V.jsx)(R,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Ciclo de Compra e Revenda 100% Interno:`})]}),(0,V.jsx)(`p`,{children:`Todo o processo acontece dentro da plataforma. Ao comprar, o pedido fica pendente até aprovação do Administrador, sendo depois entregue em "Meus Produtos" para uso ou revenda com lucro. A plataforma não realiza entregas físicas nem recomenda compras externas.`})]})]}),(0,V.jsxs)(`div`,{className:`p-3 rounded-xl bg-neutral-50 border border-neutral-200 space-y-2`,children:[(0,V.jsxs)(`div`,{className:`flex items-center justify-between text-xs`,children:[(0,V.jsxs)(`span`,{className:`font-bold text-neutral-800 flex items-center gap-1.5`,children:[(0,V.jsx)(`span`,{children:`🎨 Escolha a Cor:`}),(0,V.jsx)(`strong`,{className:`text-[#FF6A00] font-black`,children:chosenColor})]}),(0,V.jsx)(`span`,{className:`text-[10px] font-bold text-neutral-500 bg-white px-2 py-0.5 rounded border border-neutral-200`,children:`8 Opções Disponíveis`})]}),(0,V.jsx)(`div`,{className:`grid grid-cols-4 sm:grid-cols-8 gap-1.5 pt-0.5`,children:PRODUCT_8_COLORS.map(c=>{let isSel=chosenColor===c.name;return(0,V.jsxs)(`button`,{key:c.name,type:`button`,onClick:()=>setChosenColor(c.name),className:`p-1.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${isSel?`border-[#FF6A00] bg-orange-50 ring-2 ring-orange-200 shadow-xs`:`border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50`}`,children:[(0,V.jsx)(`span`,{className:`w-5 h-5 rounded-full border shadow-2xs shrink-0 inline-block`,style:{backgroundColor:c.hex,borderColor:c.border}}),(0,V.jsx)(`span`,{className:`text-[9px] font-bold truncate max-w-full ${isSel?`text-[#FF6A00]`:`text-neutral-700`}`,children:c.name})]})})})]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-4`,children:[(0,V.jsx)(`span`,{className:`text-xs font-bold text-neutral-700`,children:`Quantidade:`}),(0,V.jsxs)(`div`,{className:`flex items-center border border-neutral-300 rounded-lg overflow-hidden bg-white`,children:[(0,V.jsx)(`button`,{onClick:()=>a(Math.max(1,i-1)),className:`px-3 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-sm transition-colors`,children:`-`}),(0,V.jsx)(`span`,{className:`px-4 py-1 text-sm font-bold text-neutral-900 min-w-[36px] text-center`,children:i}),(0,V.jsx)(`button`,{onClick:()=>a(Math.min(e.stock,i+1)),className:`px-3 py-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold text-sm transition-colors`,children:`+`})]}),i>1&&(0,V.jsxs)(`span`,{className:`text-xs text-neutral-500`,children:[`Total: `,(0,V.jsx)(`strong`,{className:`text-neutral-900`,children:F(p)}),` (Lucro potencial: `,(0,V.jsxs)(`strong`,{className:`text-emerald-700`,children:[`+`,F(f)]}),`)`]})]}),(0,V.jsxs)(`div`,{className:`pt-2 flex flex-col sm:flex-row gap-3`,children:[(0,V.jsxs)(`button`,{onClick:()=>{for(let t=0;t<i;t++)n({...e,selectedColor:chosenColor});t()},disabled:e.stock<=0,className:`flex-1 py-3 px-4 rounded-xl border-2 border-[#FF6A00] text-[#FF6A00] hover:bg-orange-50 text-xs sm:text-sm font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50`,children:[(0,V.jsx)(z,{className:`w-4 h-4`}),(0,V.jsxs)(`span`,{children:[`Adicionar ao Carrinho (`,i,`)`]})]}),(0,V.jsxs)(`button`,{onClick:()=>{r({...e,selectedColor:chosenColor,_buyQuantity:i}),t()},disabled:e.stock<=0,className:`flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[#FF6A00] to-[#FF5000] hover:from-[#FF5000] hover:to-[#E03A00] text-white text-xs sm:text-sm font-black transition-all shadow-md shadow-orange-500/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50`,children:[(0,V.jsxs)(`span`,{children:[`Comprar Agora (`,F(p),`)`]}),(0,V.jsx)(Ye,{className:`w-4 h-4`})]})]}),(0,V.jsxs)(`div`,{className:`pt-3 border-t border-neutral-100 space-y-2`,children:[(0,V.jsx)(`h3`,{className:`text-xs font-bold uppercase tracking-wider text-neutral-500`,children:`Descrição & Especificações Oficiais`}),(0,V.jsx)(`p`,{className:`text-xs text-neutral-700 leading-relaxed`,children:e.description}),e.features&&e.features.length>0&&(0,V.jsx)(`ul`,{className:`grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-2`,children:e.features.map((e,t)=>(0,V.jsxs)(`li`,{className:`text-xs text-neutral-600 flex items-center gap-1.5`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5 text-amber-500 shrink-0`}),(0,V.jsx)(`span`,{children:e})]},t))})]})]})]})})]})})},rn=({products:e,currentUser:n,onNavigateTab:i,onAddToCart:a,onDirectBuy:o,initialCategory:s,searchQuery:c=``})=>{
   const [selectedCat,setSelectedCat]=(0,_.useState)(s||`all`);
   const [sortBy,setSortBy]=(0,_.useState)(`featured`);
   const [selectedProd,setSelectedProd]=(0,_.useState)(null);
@@ -857,7 +860,7 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
   );
 },HomeMarketView = rn,an=({products:e,currentUser:t,onAddToCart:r,onDirectBuy:i,searchQuery:a,initialCategory:o})=>(
   <HomeMarketView products={e} currentUser={t} onAddToCart={r} onDirectBuy={i} initialCategory={o} searchQuery={a}/>
-),OfficialMarketView = an,on=({isOpen:e,onClose:t,negotiation:n,currentUser:r,wallet:i,onConfirmPurchase:a})=>{let[o,s]=(0,_.useState)(``),[c,l]=(0,_.useState)(n.currentProposedPrice),[u,d]=(0,_.useState)(!1),[f,p]=(0,_.useState)(null);_.useEffect(()=>{l(n.currentProposedPrice)},[n?.id,n?.currentProposedPrice]);if(!e)return null;let m=r.id===n.sellerId,h=r.id===n.buyerId,g=n.status===`aceite`,v=n.status===`concluida`||n.status===`cancelada`;i.availableBalance,n.currentProposedPrice;let y=e=>{if(e.preventDefault(),o.trim())try{Ce(n.id,r.id,r.name,o.trim()),s(``)}catch(e){p(e.message)}},b=e=>{p(null);try{if(e===`contraproposta`){if(!c||c<=0){p(`Insere um valor válido para a contraproposta.`);return}xe(n.id,`contraproposta`,c),d(!1)}else xe(n.id,e)}catch(e){p(e.message)}},x=e=>{p(null);try{if(e===`contraproposta`){if(!c||c<=0){p(`Insere um valor válido para a contraproposta.`);return}Se(n.id,`contraproposta`,c),d(!1)}else Se(n.id,e)}catch(e){p(e.message)}};return(0,V.jsx)(`div`,{className:`fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn`,children:(0,V.jsxs)(`div`,{className:`bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-neutral-200 flex flex-col max-h-[92vh]`,children:[(0,V.jsxs)(`div`,{className:`p-4 bg-neutral-900 text-white flex items-center justify-between`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-3`,children:[(0,V.jsx)(`img`,{src:n.productImage,alt:n.productName,referrerPolicy:`no-referrer`,onError:e=>{e.currentTarget.onerror=null;e.currentTarget.src='https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80';},className:`w-11 h-11 rounded-lg object-cover bg-neutral-800 border border-neutral-700`}),(0,V.jsxs)(`div`,{children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsx)(`span`,{className:`text-[10px] text-amber-400 font-bold uppercase tracking-wider`,children:`Mesa de Negociação`}),(0,V.jsx)(`span`,{className:`text-neutral-500`,children:`·`}),(0,V.jsx)(`span`,{className:`text-[11px] text-neutral-300`,children:m?`Comprador: ${n.buyerName}`:`Vendedor: ${n.sellerName}`})]}),(0,V.jsx)(`h3`,{className:`text-sm font-bold text-white line-clamp-1`,children:n.productName})]})]}),(0,V.jsx)(`button`,{onClick:t,className:`p-1 text-neutral-400 hover:text-white rounded-lg transition-colors`,children:(0,V.jsx)(Zt,{className:`w-5 h-5`})})]}),(0,V.jsxs)(`div`,{className:`bg-amber-50/80 border-b border-amber-200/80 p-3 sm:px-6 flex flex-wrap items-center justify-between gap-3 text-xs`,children:[(0,V.jsxs)(`div`,{children:[(0,V.jsx)(`span`,{className:`text-neutral-500 block text-[10px] uppercase font-semibold`,children:`Preço Anunciado`}),(0,V.jsx)(`span`,{className:`font-bold text-neutral-800 line-through tabular-nums`,children:F(n.listedPrice)})]}),(0,V.jsxs)(`div`,{className:`text-right sm:text-left`,children:[(0,V.jsx)(`span`,{className:`text-amber-800 block text-[10px] uppercase font-bold`,children:`Proposta Atual em Vigor`}),(0,V.jsx)(`span`,{className:`text-lg font-black text-amber-600 tabular-nums`,children:F(n.currentProposedPrice)})]}),(0,V.jsxs)(`div`,{className:`w-full sm:w-auto`,children:[(0,V.jsx)(`span`,{className:`text-[10px] text-neutral-500 block uppercase font-semibold`,children:`Estado da Negociação`}),(0,V.jsxs)(`span`,{className:`inline-block font-bold px-2 py-0.5 rounded text-[11px] ${n.status===`aceite`?`bg-emerald-100 text-emerald-800`:n.status===`contraproposta`?`bg-amber-100 text-amber-800`:n.status===`recusada`?`bg-red-100 text-red-800`:`bg-neutral-200 text-neutral-800`}`,children:[n.status===`aceite`&&`✓ Proposta Aceite!`,n.status===`contraproposta`&&`Contraproposta Ativa`,n.status===`pendente`&&`Aguardando Resposta`,n.status===`recusada`&&`Proposta Recusada`,n.status===`concluida`&&`Venda Concluída`,n.status===`cancelada`&&`Cancelada`]})]})]}),g&&(0,V.jsxs)(`div`,{className:`p-3 bg-emerald-50 border-b border-emerald-200 text-emerald-900 text-xs flex items-center justify-between gap-2`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsx)(ct,{className:`w-4 h-4 text-emerald-600 shrink-0`}),(0,V.jsxs)(`span`,{children:[(0,V.jsxs)(`strong`,{children:[`Acordo alcançado por `,F(n.currentProposedPrice),`!`]}),h?` Podes agora confirmar o pagamento e concluir a compra.`:` Aguarda que o comprador finalize o pagamento.`]})]}),h&&(0,V.jsxs)(`button`,{onClick:()=>a(n),className:`px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-xs transition-colors shrink-0`,children:[`Comprar por `,F(n.currentProposedPrice)]})]}),(0,V.jsx)(`div`,{className:`flex-1 overflow-y-auto p-4 space-y-3 bg-neutral-50/50 min-h-[220px]`,children:n.messages.map(e=>{let t=e.senderId===r.id;return(0,V.jsxs)(`div`,{className:`flex flex-col ${t?`items-end`:`items-start`}`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-1.5 text-[10px] text-neutral-400 mb-0.5 px-1`,children:[(0,V.jsx)(`span`,{children:t?`Tu`:e.senderName}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsx)(`span`,{children:new Date(e.timestamp).toLocaleTimeString(`pt-AO`,{hour:`2-digit`,minute:`2-digit`})})]}),(0,V.jsx)(`div`,{className:`max-w-[85%] sm:max-w-[75%] rounded-2xl p-3 text-xs leading-relaxed ${t?`bg-neutral-900 text-white rounded-tr-xs`:`bg-white text-neutral-800 border border-neutral-200 rounded-tl-xs shadow-2xs`}`,children:e.text})]},e.id)})}),u&&!v&&(0,V.jsxs)(`div`,{className:`p-3 bg-amber-50/70 border-t border-amber-200 flex items-center gap-2`,children:[(0,V.jsxs)(`div`,{className:`flex-1`,children:[(0,V.jsx)(`label`,{className:`text-[10px] font-bold text-neutral-600 block mb-1`,children:`Indica o teu novo valor de contraproposta (Kz):`}),(0,V.jsx)(`input`,{type:`number`,value:c,onChange:e=>l(Number(e.target.value)),step:`500`,min:`1000`,className:`w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-500`})]}),(0,V.jsx)(`button`,{onClick:()=>m?b(`contraproposta`):x(`contraproposta`),className:`mt-4 px-4 py-2 bg-neutral-900 text-amber-400 hover:bg-neutral-800 text-xs font-bold rounded-lg transition-colors`,children:`Enviar Valor`}),(0,V.jsx)(`button`,{onClick:()=>d(!1),className:`mt-4 px-2 py-2 text-neutral-500 hover:text-neutral-800 text-xs`,children:`Cancelar`})]}),f&&(0,V.jsx)(`div`,{className:`p-2.5 bg-red-50 text-red-700 text-xs border-t border-red-200`,children:f}),m&&!v&&n.lastOfferBy===`buyer`&&(0,V.jsxs)(`div`,{className:`p-3 bg-white border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2`,children:[(0,V.jsxs)(`span`,{className:`text-xs font-semibold text-neutral-700`,children:[`O comprador propôs `,F(n.currentProposedPrice),`:`]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsxs)(`button`,{onClick:()=>b(`aceitar`),className:`px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Aceitar Proposta`})]}),(0,V.jsxs)(`button`,{onClick:()=>d(!0),className:`px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-neutral-300`,children:[(0,V.jsx)(At,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Contraproposta`})]}),(0,V.jsxs)(`button`,{onClick:()=>b(`recusar`),className:`px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-red-200`,children:[(0,V.jsx)(Qe,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Recusar`})]})]})]}),h&&!v&&n.lastOfferBy===`seller`&&(0,V.jsxs)(`div`,{className:`p-3 bg-white border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2`,children:[(0,V.jsxs)(`span`,{className:`text-xs font-semibold text-neutral-700`,children:[`O vendedor propôs `,F(n.currentProposedPrice),`:`]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsxs)(`button`,{onClick:()=>x(`aceitar`),className:`px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Aceitar Valor`})]}),(0,V.jsxs)(`button`,{onClick:()=>d(!0),className:`px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-neutral-300`,children:[(0,V.jsx)(At,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Nova Proposta`})]}),(0,V.jsxs)(`button`,{onClick:()=>x(`recusar`),className:`px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-red-200`,children:[(0,V.jsx)(Qe,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Desistir`})]})]})]}),!v&&!u&&!((m&&n.lastOfferBy===`buyer`)||(h&&n.lastOfferBy===`seller`))&&(m||h)&&(0,V.jsxs)(`div`,{className:`px-3 py-2 bg-amber-50/60 border-t border-amber-200/80 flex items-center justify-between gap-2 text-xs`,children:[(0,V.jsx)(`span`,{className:`text-neutral-600 font-medium`,children:`Podem continuar a conversar ou ajustar o valor até chegarem a acordo:`}),(0,V.jsxs)(`button`,{type:`button`,onClick:()=>d(!0),className:`px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shrink-0`,children:[(0,V.jsx)(At,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Propor Novo Preço`})]})]}),!v&&(0,V.jsxs)(`form`,{onSubmit:y,className:`p-3 bg-white border-t border-neutral-200 flex items-center gap-2`,children:[(0,V.jsx)(`input`,{type:`text`,value:o,onChange:e=>s(e.target.value),placeholder:`Escreve uma mensagem para combinar detalhes ou preço...`,className:`flex-1 px-3 py-2 bg-neutral-100 rounded-lg text-xs text-neutral-800 placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-amber-500`}),(0,V.jsx)(`button`,{type:`submit`,disabled:!o.trim(),className:`p-2 bg-neutral-900 text-amber-400 hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-40`,title:`Enviar Mensagem`,children:(0,V.jsx)(Mt,{className:`w-4 h-4`})})]})]})})},sn=({listings:e,currentUser:t,wallet:n,onOpenNegotiation:r,onSuccessOrder:i,onNavigateToWallet:a,searchQuery:o,initialCategory:s,onNotice,onNavigateToOfficial})=>{
+),OfficialMarketView = an,on=({isOpen:e,onClose:t,negotiation:n,currentUser:r,wallet:i,onConfirmPurchase:a})=>{let[o,s]=(0,_.useState)(``),[c,l]=(0,_.useState)(n.currentProposedPrice),[u,d]=(0,_.useState)(!1),[f,p]=(0,_.useState)(null);_.useEffect(()=>{l(n.currentProposedPrice)},[n?.id,n?.currentProposedPrice]);if(!e)return null;let m=r.id===n.sellerId,h=r.id===n.buyerId,g=n.status===`aceite`,v=n.status===`concluida`||n.status===`cancelada`||n.status===`recusada`,awaitingAdm=n.status===`aguardando_adm`;i.availableBalance,n.currentProposedPrice;let y=e=>{if(e.preventDefault(),o.trim())try{Ce(n.id,r.id,r.name,o.trim()),s(``)}catch(e){p(e.message)}},b=e=>{p(null);try{if(e===`contraproposta`){if(!c||c<=0){p(`Insere um valor válido para a contraproposta.`);return}xe(n.id,`contraproposta`,c),d(!1)}else xe(n.id,e)}catch(e){p(e.message)}},x=e=>{p(null);try{if(e===`contraproposta`){if(!c||c<=0){p(`Insere um valor válido para a contraproposta.`);return}Se(n.id,`contraproposta`,c),d(!1)}else Se(n.id,e)}catch(e){p(e.message)}};return(0,V.jsx)(`div`,{className:`fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn`,children:(0,V.jsxs)(`div`,{className:`bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-neutral-200 flex flex-col max-h-[92vh]`,children:[(0,V.jsxs)(`div`,{className:`p-4 bg-neutral-900 text-white flex items-center justify-between`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-3`,children:[(0,V.jsx)(`img`,{src:n.productImage,alt:n.productName,referrerPolicy:`no-referrer`,onError:e=>{e.currentTarget.onerror=null;e.currentTarget.src='https://images.unsplash.com/photo-1526738549149-8e07eca6c147?w=800&auto=format&fit=crop&q=80';},className:`w-11 h-11 rounded-lg object-cover bg-neutral-800 border border-neutral-700`}),(0,V.jsxs)(`div`,{children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsx)(`span`,{className:`text-[10px] text-amber-400 font-bold uppercase tracking-wider`,children:`Mesa de Negociação`}),(0,V.jsx)(`span`,{className:`text-neutral-500`,children:`·`}),(0,V.jsx)(`span`,{className:`text-[11px] text-neutral-300`,children:m?`Comprador: ${n.buyerName}`:`Vendedor: ${n.sellerName}`})]}),(0,V.jsx)(`h3`,{className:`text-sm font-bold text-white line-clamp-1`,children:n.productName})]})]}),(0,V.jsx)(`button`,{onClick:t,className:`p-1 text-neutral-400 hover:text-white rounded-lg transition-colors`,children:(0,V.jsx)(Zt,{className:`w-5 h-5`})})]}),(0,V.jsxs)(`div`,{className:`bg-amber-50/80 border-b border-amber-200/80 p-3 sm:px-6 flex flex-wrap items-center justify-between gap-3 text-xs`,children:[(0,V.jsxs)(`div`,{children:[(0,V.jsx)(`span`,{className:`text-neutral-500 block text-[10px] uppercase font-semibold`,children:`Preço Anunciado`}),(0,V.jsx)(`span`,{className:`font-bold text-neutral-800 line-through tabular-nums`,children:F(n.listedPrice)})]}),(0,V.jsxs)(`div`,{className:`text-right sm:text-left`,children:[(0,V.jsx)(`span`,{className:`text-amber-800 block text-[10px] uppercase font-bold`,children:`Proposta Atual em Vigor`}),(0,V.jsx)(`span`,{className:`text-lg font-black text-amber-600 tabular-nums`,children:F(n.currentProposedPrice)})]}),(0,V.jsxs)(`div`,{className:`w-full sm:w-auto`,children:[(0,V.jsx)(`span`,{className:`text-[10px] text-neutral-500 block uppercase font-semibold`,children:`Estado da Negociação`}),(0,V.jsxs)(`span`,{className:`inline-block font-bold px-2 py-0.5 rounded text-[11px] ${n.status===`aceite`?`bg-emerald-100 text-emerald-800`:n.status===`aguardando_adm`?`bg-purple-100 text-purple-800`:n.status===`contraproposta`?`bg-amber-100 text-amber-800`:n.status===`recusada`?`bg-red-100 text-red-800`:`bg-neutral-200 text-neutral-800`}`,children:[n.status===`aguardando_adm`&&`Aguardando Adm`,n.status===`aceite`&&`✓ Proposta Aceite!`,n.status===`contraproposta`&&`Contraproposta Ativa`,n.status===`pendente`&&`Aguardando Resposta`,n.status===`recusada`&&`Proposta Recusada`,n.status===`concluida`&&`Venda Concluída`,n.status===`cancelada`&&`Cancelada`]})]})]}),awaitingAdm&&(0,V.jsxs)(`div`,{className:`p-3 bg-purple-50 border-b border-purple-200 text-purple-900 text-xs flex items-center gap-2`,children:[(0,V.jsx)(ut,{className:`w-4 h-4 text-purple-600 shrink-0`}),(0,V.jsx)(`span`,{children:`Proposta submetida! A aguardar aprovação do Administrador no Painel do Adm antes de ser encaminhada para o vendedor.`})]}),n.status===`recusada`&&n.adminRejectionReason&&(0,V.jsxs)(`div`,{className:`p-3 bg-red-50 border-b border-red-200 text-red-800 text-xs flex items-start gap-2 font-semibold`,children:[(0,V.jsx)(Qe,{className:`w-4 h-4 text-red-600 shrink-0 mt-0.5`}),(0,V.jsxs)(`span`,{children:[`Proposta recusada pelo Administrador. Motivo: `,n.adminRejectionReason]})]}),g&&(0,V.jsxs)(`div`,{className:`p-3 bg-emerald-50 border-b border-emerald-200 text-emerald-900 text-xs flex items-center justify-between gap-2`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsx)(ct,{className:`w-4 h-4 text-emerald-600 shrink-0`}),(0,V.jsxs)(`span`,{children:[(0,V.jsxs)(`strong`,{children:[`Acordo alcançado por `,F(n.currentProposedPrice),`!`]}),h?` Podes agora solicitar o pagamento (ficará sujeito a aprovação do Adm).`:` Aguarda que o comprador finalize o pagamento.`]})]}),h&&(0,V.jsxs)(`button`,{onClick:()=>a(n),className:`px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-xs transition-colors shrink-0 cursor-pointer`,children:[`Comprar por `,F(n.currentProposedPrice)]})]}),(0,V.jsx)(`div`,{className:`flex-1 overflow-y-auto p-4 space-y-3 bg-neutral-50/50 min-h-[220px]`,children:n.messages.map(e=>{let t=e.senderId===r.id;return(0,V.jsxs)(`div`,{className:`flex flex-col ${t?`items-end`:`items-start`}`,children:[(0,V.jsxs)(`div`,{className:`flex items-center gap-1.5 text-[10px] text-neutral-400 mb-0.5 px-1`,children:[(0,V.jsx)(`span`,{children:t?`Tu`:e.senderName}),(0,V.jsx)(`span`,{children:`·`}),(0,V.jsx)(`span`,{children:new Date(e.timestamp).toLocaleTimeString(`pt-AO`,{hour:`2-digit`,minute:`2-digit`})})]}),(0,V.jsx)(`div`,{className:`max-w-[85%] sm:max-w-[75%] rounded-2xl p-3 text-xs leading-relaxed ${t?`bg-neutral-900 text-white rounded-tr-xs`:`bg-white text-neutral-800 border border-neutral-200 rounded-tl-xs shadow-2xs`}`,children:e.text})]},e.id)})}),u&&!v&&!awaitingAdm&&(0,V.jsxs)(`div`,{className:`p-3 bg-amber-50/70 border-t border-amber-200 flex items-center gap-2`,children:[(0,V.jsxs)(`div`,{className:`flex-1`,children:[(0,V.jsx)(`label`,{className:`text-[10px] font-bold text-neutral-600 block mb-1`,children:`Indica o teu novo valor de contraproposta (Kz):`}),(0,V.jsx)(`input`,{type:`number`,value:c,onChange:e=>l(Number(e.target.value)),step:`500`,min:`1000`,className:`w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-neutral-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-amber-500`})]}),(0,V.jsx)(`button`,{onClick:()=>m?b(`contraproposta`):x(`contraproposta`),className:`mt-4 px-4 py-2 bg-neutral-900 text-amber-400 hover:bg-neutral-800 text-xs font-bold rounded-lg transition-colors`,children:`Enviar Valor`}),(0,V.jsx)(`button`,{onClick:()=>d(!1),className:`mt-4 px-2 py-2 text-neutral-500 hover:text-neutral-800 text-xs`,children:`Cancelar`})]}),f&&(0,V.jsx)(`div`,{className:`p-2.5 bg-red-50 text-red-700 text-xs border-t border-red-200`,children:f}),m&&!v&&!awaitingAdm&&n.lastOfferBy===`buyer`&&(0,V.jsxs)(`div`,{className:`p-3 bg-white border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2`,children:[(0,V.jsxs)(`span`,{className:`text-xs font-semibold text-neutral-700`,children:[`O comprador propôs `,F(n.currentProposedPrice),`:`]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsxs)(`button`,{onClick:()=>b(`aceitar`),className:`px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Aceitar Proposta`})]}),(0,V.jsxs)(`button`,{onClick:()=>d(!0),className:`px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-neutral-300`,children:[(0,V.jsx)(At,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Contraproposta`})]}),(0,V.jsxs)(`button`,{onClick:()=>b(`recusar`),className:`px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-red-200`,children:[(0,V.jsx)(Qe,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Recusar`})]})]})]}),h&&!v&&!awaitingAdm&&n.lastOfferBy===`seller`&&(0,V.jsxs)(`div`,{className:`p-3 bg-white border-t border-neutral-200 flex flex-wrap items-center justify-between gap-2`,children:[(0,V.jsxs)(`span`,{className:`text-xs font-semibold text-neutral-700`,children:[`O vendedor propôs `,F(n.currentProposedPrice),`:`]}),(0,V.jsxs)(`div`,{className:`flex items-center gap-2`,children:[(0,V.jsxs)(`button`,{onClick:()=>x(`aceitar`),className:`px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors`,children:[(0,V.jsx)(ct,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Aceitar Valor`})]}),(0,V.jsxs)(`button`,{onClick:()=>d(!0),className:`px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-neutral-300`,children:[(0,V.jsx)(At,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Nova Proposta`})]}),(0,V.jsxs)(`button`,{onClick:()=>x(`recusar`),className:`px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors border border-red-200`,children:[(0,V.jsx)(Qe,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Desistir`})]})]})]}),!v&&!awaitingAdm&&!u&&!((m&&n.lastOfferBy===`buyer`)||(h&&n.lastOfferBy===`seller`))&&(m||h)&&(0,V.jsxs)(`div`,{className:`px-3 py-2 bg-amber-50/60 border-t border-amber-200/80 flex items-center justify-between gap-2 text-xs`,children:[(0,V.jsx)(`span`,{className:`text-neutral-600 font-medium`,children:`Podem continuar a conversar ou ajustar o valor até chegarem a acordo:`}),(0,V.jsxs)(`button`,{type:`button`,onClick:()=>d(!0),className:`px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shrink-0`,children:[(0,V.jsx)(At,{className:`w-3.5 h-3.5`}),(0,V.jsx)(`span`,{children:`Propor Novo Preço`})]})]}),!v&&!awaitingAdm&&(0,V.jsxs)(`form`,{onSubmit:y,className:`p-3 bg-white border-t border-neutral-200 flex items-center gap-2`,children:[(0,V.jsx)(`input`,{type:`text`,value:o,onChange:e=>s(e.target.value),placeholder:`Escreve uma mensagem para combinar detalhes ou preço...`,className:`flex-1 px-3 py-2 bg-neutral-100 rounded-lg text-xs text-neutral-800 placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-amber-500`}),(0,V.jsx)(`button`,{type:`submit`,disabled:!o.trim(),className:`p-2 bg-neutral-900 text-amber-400 hover:bg-neutral-800 rounded-lg transition-colors disabled:opacity-40`,title:`Enviar Mensagem`,children:(0,V.jsx)(Mt,{className:`w-4 h-4`})})]})]})})},sn=({listings:e,currentUser:t,wallet:n,onOpenNegotiation:r,onSuccessOrder:i,onNavigateToWallet:a,searchQuery:o,initialCategory:s,onNotice,onNavigateToOfficial})=>{
   const [c,l]=(0,_.useState)(s||`all`);
   const [f,p]=(0,_.useState)(null);
   const [m,h]=(0,_.useState)(0);
@@ -917,13 +920,15 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
       showAppNotice('Não podes comprar o teu próprio produto.', 'error');
       return;
     }
-    if(n.availableBalance<item.listingPrice){
+    const isAdminBuyer=t.role==='admin'||t.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'||t.id==='usr_admin';
+    const spendable=isAdminBuyer?n.availableBalance:getLivre(t.id);
+    if(!isAdminBuyer&&spendable<item.listingPrice){
       if(onNotice){
         onNotice({
           type:'insufficient_funds',
           productName:item.productName,
           price:item.listingPrice,
-          availableBalance:n.availableBalance
+          availableBalance:spendable
         });
       }else{
         a();
@@ -1099,7 +1104,7 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
                 <textarea value={g} onChange={ev=>v(ev.target.value)} placeholder="Ex: Olá, tenho interesse no artigo e disponho deste valor para fechar negócio hoje." rows={3} className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"/>
               </div>
               <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
-                ℹ️ <strong>Como funciona a negociação:</strong> O vendedor receberá uma notificação na sua área <em>Meus Produtos</em> e poderá aceitar, enviar uma contraproposta ou recusar. Nenhum valor é debitado até que ambas as partes concordem e tu confirmes o checkout.
+                ℹ️ <strong>Como funciona a negociação:</strong> A tua proposta passa primeiro pela aprovação do Administrador no Painel do Adm. Depois de aprovada, o vendedor recebe notificação em <em>Meus Produtos</em> para aceitar, contrapropor ou recusar. Qualquer compra final também passa pela aprovação do Administrador.
               </div>
               {x&&(<div className="p-2.5 bg-red-50 text-red-700 text-xs rounded-lg border border-red-200">{x}</div>)}
               <div className="flex items-center gap-2 pt-2">
@@ -1121,10 +1126,26 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
           currentUser={t}
           wallet={n}
           onConfirmPurchase={neg=>{
-            try{
-              const ord=je(neg.listingId,t.id,neg.currentProposedPrice);
+            const isAdminBuyer=t.role==='admin'||t.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'||t.id==='usr_admin';
+            const spendable=isAdminBuyer?n.availableBalance:getLivre(t.id);
+            if(!isAdminBuyer&&spendable<neg.currentProposedPrice){
               T(null);
-              i(ord.id);
+              if(onNotice){
+                onNotice({
+                  type:'insufficient_funds',
+                  productName:neg.productName,
+                  price:neg.currentProposedPrice,
+                  availableBalance:spendable
+                });
+              }else{
+                showAppNotice(`Saldo livre insuficiente (${F(spendable)}) para comprar por ${F(neg.currentProposedPrice)}.`, 'error');
+              }
+              return;
+            }
+            try{
+              je(neg.listingId,t.id,neg.currentProposedPrice);
+              T(null);
+              i(neg.productName);
             }catch(err:any){
               showAppNotice(err.message||'Falha ao concluir compra da proposta.', 'error');
             }
@@ -1142,8 +1163,8 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
   const [g,v]=useState<string|null>(null);
   const [y,b]=useState<any>(null);
 
-  const x = ve();
-  const S = x.filter((item: any) => item.sellerId === t.id && item.status !== 'vendido');
+  const x = veAll();
+  const S = x.filter((item: any) => item.sellerId === t.id && item.status !== 'vendido' && item.status !== 'rejeitado' && item.status !== 'pausado');
   const C = M(t.id);
 
   useEffect(() => {
@@ -1175,6 +1196,10 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
     try {
       ye(c.id, t.id, u, f, m);
       l(null);
+      v(t.role === 'admin'
+        ? 'Anúncio publicado no Mercado de Revenda!'
+        : 'Anúncio enviado para aprovação do Administrador! Só ficará visível no mercado após aprovação.');
+      setTimeout(() => v(null), 5000);
     } catch (err: any) {
       v(err.message || 'Falha ao colocar produto à venda.');
     }
@@ -1298,7 +1323,8 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
               {e.map((item: any) => {
                 const isAnnounced = item.status === 'anunciado';
                 const isSold = item.status === 'vendido';
-                const activeListing = x.find((lItem: any) => lItem.userProductId === item.id && lItem.status !== 'vendido');
+                const activeListing = x.find((lItem: any) => lItem.userProductId === item.id && (lItem.status === 'ativo' || lItem.status === 'pendente'));
+                const lastRejectedListing = x.filter((lItem: any) => lItem.userProductId === item.id && lItem.status === 'rejeitado').slice(-1)[0];
                 const itemNegs = C.filter((ng: any) => ng.userProductId === item.id);
                 return (
                   <div
@@ -1315,7 +1341,14 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
                           className="w-18 h-18 rounded-xl object-cover bg-neutral-100 shrink-0 border border-neutral-200"
                         />
                         <div className="flex-1 min-w-0">
-                          <div className="mb-1">{D(item.status)}</div>
+                          <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                            {D(item.status)}
+                            {activeListing?.status === 'pendente' && (
+                              <span className="text-[10px] font-bold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-md border border-purple-200">
+                                Aguardando Aprovação do Adm
+                              </span>
+                            )}
+                          </div>
                           <h3 className="text-sm font-bold text-neutral-900 line-clamp-2">{item.productName}</h3>
                           <span className="text-[10px] text-neutral-400 block mt-0.5">ID: {item.serialNumber || item.id}</span>
                         </div>
@@ -1336,6 +1369,11 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
                           </div>
                         )}
                       </div>
+                      {item.status === 'disponivel' && lastRejectedListing?.rejectionReason && (
+                        <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-[11px] font-semibold text-red-700">
+                          Anúncio recusado pelo Adm — Motivo: {lastRejectedListing.rejectionReason}
+                        </div>
+                      )}
                     </div>
 
                     <div className="pt-2 border-t border-neutral-100 flex items-center justify-between gap-2">
@@ -1424,7 +1462,9 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
                           className="w-16 h-16 rounded-xl object-cover bg-neutral-100 shrink-0"
                         />
                         <div className="flex-1 min-w-0">
-                          <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">Ativo no Mercado de Revenda</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${item.status === 'pendente' ? 'text-purple-800 bg-purple-100 border border-purple-200' : 'text-amber-800 bg-amber-100'}`}>
+                            {item.status === 'pendente' ? 'Aguardando Aprovação do Adm' : 'Ativo no Mercado de Revenda'}
+                          </span>
                           <h3 className="text-sm font-bold text-neutral-900 mt-1 line-clamp-1">{item.productName}</h3>
                           <div className="text-base font-black text-neutral-900 mt-0.5 tabular-nums">{F(item.listingPrice)}</div>
                         </div>
@@ -1477,12 +1517,13 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
               {C.map((item: any) => {
                 const isSeller = item.sellerId === t.id;
                 const otherName = isSeller ? item.buyerName : item.sellerName;
-                const myTurn = (isSeller && item.lastOfferBy === 'buyer') || (!isSeller && item.lastOfferBy === 'seller');
+                const isClosedOrAdm = item.status === 'aguardando_adm' || item.status === 'concluida' || item.status === 'cancelada' || item.status === 'recusada';
+                const myTurn = !isClosedOrAdm && ((isSeller && item.lastOfferBy === 'buyer') || (!isSeller && item.lastOfferBy === 'seller'));
                 return (
                   <div
                     key={item.id}
                     onClick={() => b(item)}
-                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${myTurn && item.status !== 'concluida' ? 'bg-amber-50/50 border-amber-300 hover:bg-amber-50' : 'bg-white border-neutral-200 hover:border-neutral-300'}`}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${myTurn ? 'bg-amber-50/50 border-amber-300 hover:bg-amber-50' : 'bg-white border-neutral-200 hover:border-neutral-300'}`}
                   >
                     <div className="flex items-center gap-3">
                       <img
@@ -1498,10 +1539,11 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
                           <span className="text-[10px] text-neutral-400">·</span>
                           <span className="text-xs text-neutral-500">{isSeller ? `Comprador: ${otherName}` : `Vendedor: ${otherName}`}</span>
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
                           <span className="text-xs text-neutral-400 line-through tabular-nums">{F(item.listedPrice)}</span>
                           <span className="text-sm font-black text-amber-600 tabular-nums">{F(item.currentProposedPrice)}</span>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${item.status === 'aceite' ? 'bg-emerald-100 text-emerald-800' : item.status === 'contraproposta' ? 'bg-amber-100 text-amber-800' : item.status === 'concluida' ? 'bg-neutral-200 text-neutral-700' : 'bg-neutral-100 text-neutral-700'}`}>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${item.status === 'aceite' ? 'bg-emerald-100 text-emerald-800' : item.status === 'aguardando_adm' ? 'bg-purple-100 text-purple-800' : item.status === 'contraproposta' ? 'bg-amber-100 text-amber-800' : item.status === 'recusada' ? 'bg-red-100 text-red-800' : item.status === 'concluida' ? 'bg-neutral-200 text-neutral-700' : 'bg-neutral-100 text-neutral-700'}`}>
+                            {item.status === 'aguardando_adm' && 'Aguardando Adm'}
                             {item.status === 'aceite' && 'Acordo Aceite!'}
                             {item.status === 'contraproposta' && 'Contraproposta'}
                             {item.status === 'pendente' && 'Pendente'}
@@ -1509,6 +1551,11 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
                             {item.status === 'concluida' && 'Concluída'}
                           </span>
                         </div>
+                        {item.status === 'recusada' && item.adminRejectionReason && (
+                          <div className="mt-1 text-[11px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-0.5 inline-block">
+                            Motivo da recusa pelo Adm: {item.adminRejectionReason}
+                          </div>
+                        )}
                         <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-1">
                           Última mensagem: {item.messages[item.messages.length - 1]?.text}
                         </p>
@@ -1624,10 +1671,16 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
           currentUser={t}
           wallet={n}
           onConfirmPurchase={(neg: any) => {
+            const isAdminBuyer = t.role === 'admin' || t.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || t.id === 'usr_admin';
+            const spendable = isAdminBuyer ? n.availableBalance : getLivre(t.id);
+            if (!isAdminBuyer && spendable < neg.currentProposedPrice) {
+              showAppNotice(`Saldo livre insuficiente (${F(spendable)}) para comprar por ${F(neg.currentProposedPrice)}.`, 'error');
+              return;
+            }
             try {
-              const ord = je(neg.listingId, t.id, neg.currentProposedPrice);
+              je(neg.listingId, t.id, neg.currentProposedPrice);
               b(null);
-              i(ord.id);
+              i(neg.productName);
             } catch (err: any) {
               showAppNotice(err.message || 'Falha ao confirmar compra', 'error');
             }
@@ -1687,10 +1740,8 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
     }
     return Number(cleaned);
   };
-  let pendingWithdrawTotal = ze()
-    .filter((wItem: any) => wItem && wItem.userId === t.id && wItem.status === 'pendente')
-    .reduce((acc: number, wItem: any) => acc + (Number(wItem.amount) || 0), 0);
-  let maxWithdrawableBalance = Math.max(0, (e?.availableBalance || 0) - pendingWithdrawTotal);
+  let pendingWithdrawTotal = getReservado(t.id);
+  let maxWithdrawableBalance = getLivre(t.id);
   let openWithdrawModal = () => {
     setWithdrawAmountStr('');
     O(null);
@@ -1752,7 +1803,7 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
     }
     if(numericAmt > maxWithdrawableBalance){
       if(pendingWithdrawTotal > 0 && numericAmt <= e.availableBalance){
-        O(`Já tens ${F(pendingWithdrawTotal)} em saques pendentes de aprovação. Podes sacar até ${F(maxWithdrawableBalance)}.`);
+        O(`Já tens ${F(pendingWithdrawTotal)} em movimentos pendentes de aprovação pelo Administrador. Podes sacar até ${F(maxWithdrawableBalance)}.`);
       } else {
         O(`Saldo insuficiente. O teu saldo disponível para levantamento é de ${F(e.availableBalance)}.`);
       }
@@ -2061,7 +2112,7 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
             (0,V.jsx)('strong',{className:'text-neutral-900 tabular-nums font-black text-sm',children:F(e.availableBalance)})
           ]}),
           pendingWithdrawTotal > 0 && (0,V.jsxs)('div',{className:'flex justify-between text-amber-800 font-semibold text-[11px]',children:[
-            (0,V.jsx)('span',{children:'Saques pendentes de aprovação:'}),
+            (0,V.jsx)('span',{children:'Saldo retido em pedidos/saques pendentes:'}),
             (0,V.jsx)('span',{className:'tabular-nums',children:F(pendingWithdrawTotal)})
           ]})
         ]}),
@@ -2496,7 +2547,7 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
       </div>
     );
   }
-  let ie=prod=>{if(e&&(e.role==='admin'||e.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62')){showAppNotice('Como Administrador, podes apenas comprar e negociar os produtos que os utilizadores estão a vender no Mercado de Revenda!', 'error');h('revenda');return;}ee(t=>t.find(t=>t.id===prod.id)?t.map(t=>t.id===prod.id?{...t,quantity:t.quantity+1}:t):[...t,{id:prod.id,name:prod.name,price:prod.officialPrice,quantity:1,imageUrl:prod.imageUrl,source:`oficial`}])};
+  let ie=prod=>{if(e&&(e.role==='admin'||e.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62')){showAppNotice('Como Administrador, podes apenas comprar e negociar os produtos que os utilizadores estão a vender no Mercado de Revenda!', 'error');h('revenda');return;}ee(t=>t.find(t=>t.id===prod.id)?t.map(t=>t.id===prod.id?{...t,quantity:t.quantity+1,selectedColor:prod.selectedColor||t.selectedColor}:t):[...t,{id:prod.id,name:prod.name,price:prod.officialPrice,quantity:1,imageUrl:prod.imageUrl,source:`oficial`,selectedColor:prod.selectedColor}])};
 let k=prod=>{
   if (!e) {
     setAuthMode('login');
@@ -2507,20 +2558,22 @@ let k=prod=>{
     h('revenda');
     return;
   }
-  const currentWallet = n || N(e.id);
-  if (currentWallet.availableBalance < prod.officialPrice) {
+  const qty = Math.max(1, Number(prod._buyQuantity || 1));
+  const totalPrice = prod.officialPrice * qty;
+  const spendable = getLivre(e.id);
+  if (spendable < totalPrice) {
     setPurchaseNotice({
       type: 'insufficient_funds',
-      productName: prod.name,
-      price: prod.officialPrice,
-      availableBalance: currentWallet.availableBalance,
+      productName: qty > 1 ? `${qty}x ${prod.name}` : prod.name,
+      price: totalPrice,
+      availableBalance: spendable,
       product: prod
     });
   } else {
     try {
-      let res = Ae(e.id, prod.id, 1);
+      Ae(e.id, prod.id, qty, prod.selectedColor);
       O();
-      ne(prod.name);
+      ne(`${qty > 1 ? `${qty}x ` : ''}${prod.name}`);
     } catch (err: any) {
       showAppNotice(err.message || 'Erro ao processar compra', 'error');
     }
@@ -2682,32 +2735,56 @@ return(
     {te&&(
       <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
         <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 text-center space-y-4">
-          <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
-            <CheckCircle2 className="w-8 h-8"/>
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-lg font-black text-neutral-900">Compra Concluída com Sucesso!</h3>
-            <p className="text-xs text-neutral-500">
-              A tua compra <strong>{te}</strong> foi confirmada com sucesso! O artigo foi creditado imediatamente na secção Meus Produtos para uso ou revenda com a tua margem de lucro.
-            </p>
-          </div>
-          <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-xs text-neutral-700 space-y-1 text-left">
-            <div className="flex items-center gap-1.5 font-bold text-amber-700">
-              <L className="w-4 h-4"/>
-              <span>O teu produto já está em "Meus Produtos"!</span>
-            </div>
-            <p className="text-[11px] text-neutral-500">
-              Podes agora aceder à tua área pessoal para utilizar o produto ou anunciá-lo de imediato no Mercado de Revenda com o preço que definires.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 pt-2">
-            <button type="button" onClick={()=>{ne(null);h(`meus_produtos`);}} className="flex-1 py-2.5 bg-neutral-900 text-amber-400 hover:bg-neutral-800 text-xs font-bold rounded-xl transition-colors shadow-xs cursor-pointer">
-              Ver em Meus Produtos
-            </button>
-            <button type="button" onClick={()=>ne(null)} className="flex-1 py-2.5 border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
-              Continuar no Mercado
-            </button>
-          </div>
+          {e&&(e.role===`admin`||e.id===`kt5dFLArJzV7hCNMQ3ZvgqFokM62`)?(
+            <>
+              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8"/>
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-lg font-black text-neutral-900">Compra Concluída com Sucesso!</h3>
+                <p className="text-xs text-neutral-500">
+                  A tua compra <strong>{te}</strong> foi confirmada! O artigo já está em Meus Produtos.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <button type="button" onClick={()=>{ne(null);h(`meus_produtos`);}} className="flex-1 py-2.5 bg-neutral-900 text-amber-400 hover:bg-neutral-800 text-xs font-bold rounded-xl transition-colors shadow-xs cursor-pointer">
+                  Ver em Meus Produtos
+                </button>
+                <button type="button" onClick={()=>ne(null)} className="flex-1 py-2.5 border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+                  Continuar no Mercado
+                </button>
+              </div>
+            </>
+          ):(
+            <>
+              <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-600 mx-auto flex items-center justify-center">
+                <Clock className="w-8 h-8"/>
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-lg font-black text-neutral-900">Pedido Enviado para Aprovação do Adm!</h3>
+                <p className="text-xs text-neutral-500">
+                  O teu pedido de compra <strong>{te}</strong> ficou registado como <strong className="text-amber-700">Pendente</strong> no teu Extrato.
+                </p>
+              </div>
+              <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200 text-xs text-amber-950 space-y-1 text-left">
+                <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                  <L className="w-4 h-4"/>
+                  <span>Aguardando aprovação do Administrador</span>
+                </div>
+                <p className="text-[11px] text-amber-900">
+                  O valor só será debitado da tua conta e marcado como Sucesso quando o Administrador aprovar o movimento, momento em que o artigo entra automaticamente em Meus Produtos.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 pt-2">
+                <button type="button" onClick={()=>{ne(null);h(`carteira`);}} className="flex-1 py-2.5 bg-neutral-900 text-amber-400 hover:bg-neutral-800 text-xs font-bold rounded-xl transition-colors shadow-xs cursor-pointer">
+                  Ver Extrato
+                </button>
+                <button type="button" onClick={()=>ne(null)} className="flex-1 py-2.5 border border-neutral-300 hover:bg-neutral-50 text-neutral-800 text-xs font-semibold rounded-xl transition-colors cursor-pointer">
+                  Continuar no Mercado
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     )}

@@ -61,7 +61,8 @@ export const DB_KEYS = {
   TRANSACTIONS: 'baba_transactions_v10',
   DEPOSITS: 'baba_deposits_v9',
   WITHDRAWALS: 'baba_withdrawals_v9',
-  NOTIFICATIONS: 'baba_notifications_v9'
+  NOTIFICATIONS: 'baba_notifications_v9',
+  ORDERS: 'baba_orders_v9'
 };
 
 export const DB_STATE_EVENT = 'baba_db_state_changed';
@@ -84,6 +85,7 @@ let memoryNegotiations: Negotiation[] = [];
 let memoryNotifications: Notification[] = [];
 let memoryDeposits: DepositRequest[] = [];
 let memoryWithdrawals: WithdrawalRequest[] = [];
+let memoryOrders: Order[] = [];
 
 let isInitialized = false;
 
@@ -137,6 +139,7 @@ function applyLocalAdminOnlyResetOnce(): void {
     localStorage.setItem(DB_KEYS.NOTIFICATIONS, JSON.stringify([]));
     localStorage.setItem(DB_KEYS.DEPOSITS, JSON.stringify([]));
     localStorage.setItem(DB_KEYS.WITHDRAWALS, JSON.stringify([]));
+    localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify([]));
 
     const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
     if (currentId && currentId !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
@@ -165,6 +168,7 @@ memoryNegotiations = loadFromStorage(DB_KEYS.NEGOTIATIONS, INITIAL_NEGOTIATIONS)
 memoryNotifications = loadFromStorage(DB_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
 memoryDeposits = loadFromStorage(DB_KEYS.DEPOSITS, INITIAL_DEPOSITS);
 memoryWithdrawals = loadFromStorage(DB_KEYS.WITHDRAWALS, INITIAL_WITHDRAWALS);
+memoryOrders = loadFromStorage(DB_KEYS.ORDERS, []);
 
 async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
   const adminId = 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
@@ -212,7 +216,8 @@ async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
       purgeCollection('negotiations'),
       purgeCollection('notifications'),
       purgeCollection('deposits'),
-      purgeCollection('withdrawals')
+      purgeCollection('withdrawals'),
+      purgeCollection('orders')
     ]);
 
     const adminUserData = {
@@ -231,6 +236,7 @@ async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
     memoryDeposits = [];
     memoryWithdrawals = [];
     memoryTransactions = [];
+    memoryOrders = [];
     backupToStorage(DB_KEYS.USERS, memoryUsers);
     backupToStorage(DB_KEYS.WALLETS, memoryWallets);
     backupToStorage(DB_KEYS.RESALE_LISTINGS, []);
@@ -240,6 +246,7 @@ async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
     backupToStorage(DB_KEYS.DEPOSITS, []);
     backupToStorage(DB_KEYS.WITHDRAWALS, []);
     backupToStorage(DB_KEYS.TRANSACTIONS, []);
+    backupToStorage(DB_KEYS.ORDERS, []);
     dispatchDbChange();
   } catch (err) {
     console.warn('Admin-only purge note:', err);
@@ -314,6 +321,9 @@ export function initDatabase(): void {
         changed = true;
       } else if (ev.key === DB_KEYS.NOTIFICATIONS) {
         memoryNotifications = loadFromStorage(DB_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+        changed = true;
+      } else if (ev.key === DB_KEYS.ORDERS) {
+        memoryOrders = loadFromStorage(DB_KEYS.ORDERS, []);
         changed = true;
       }
       if (changed) dispatchDbChange();
@@ -521,6 +531,17 @@ export function initDatabase(): void {
       },
       err => console.warn('Transactions live listener notice:', err.message)
     );
+
+    // 11. Subscribe to Firestore Orders
+    onSnapshot(
+      collection(firestore, 'orders'),
+      snap => {
+        memoryOrders = mergeListById<Order>(snap.docs, memoryOrders, 'orders', true);
+        backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+        dispatchDbChange();
+      },
+      err => console.warn('Orders live listener notice:', err.message)
+    );
   })();
 }
 
@@ -679,13 +700,15 @@ export async function syncAdminCollectionsFromFirestore(): Promise<void> {
     const withTimeout = <T,>(p: Promise<T>) =>
       Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), 3000))]);
 
-    const [depSnap, wthSnap, listSnap, negSnap, walSnap, txSnap] = await Promise.all([
+    const [depSnap, wthSnap, listSnap, negSnap, walSnap, txSnap, ordSnap, upSnap] = await Promise.all([
       withTimeout(getDocs(collection(firestore, 'deposits'))),
       withTimeout(getDocs(collection(firestore, 'withdrawals'))),
       withTimeout(getDocs(collection(firestore, 'resale_listings'))),
       withTimeout(getDocs(collection(firestore, 'negotiations'))),
       withTimeout(getDocs(collection(firestore, 'wallets'))),
-      withTimeout(getDocs(collection(firestore, 'transactions')))
+      withTimeout(getDocs(collection(firestore, 'transactions'))),
+      withTimeout(getDocs(collection(firestore, 'orders'))),
+      withTimeout(getDocs(collection(firestore, 'user_products')))
     ]);
 
     if (depSnap) {
@@ -721,6 +744,16 @@ export async function syncAdminCollectionsFromFirestore(): Promise<void> {
     if (txSnap) {
       memoryTransactions = mergeListById<Transaction>(txSnap.docs, memoryTransactions, 'transactions', true);
       backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+    }
+
+    if (ordSnap) {
+      memoryOrders = mergeListById<Order>(ordSnap.docs, memoryOrders, 'orders', true);
+      backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+    }
+
+    if (upSnap) {
+      memoryUserProducts = mergeListById<UserProduct>(upSnap.docs, memoryUserProducts, 'user_products', false);
+      backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
     }
 
     dispatchDbChange();
@@ -1559,6 +1592,21 @@ export function getWallet(userId: string): Wallet {
   return wallet;
 }
 
+export function getPendingReservedAmount(userId: string): number {
+  const pendingWithdrawals = memoryWithdrawals
+    .filter(w => w && w.userId === userId && w.status === 'pendente')
+    .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
+  const pendingOrders = memoryOrders
+    .filter(o => o && o.buyerId === userId && o.status === 'aguardando_aprovacao')
+    .reduce((acc, o) => acc + (Number(o.totalAmount) || 0), 0);
+  return pendingWithdrawals + pendingOrders;
+}
+
+export function getSpendableBalance(userId: string): number {
+  const wallet = getWallet(userId);
+  return Math.max(0, (Number(wallet.availableBalance) || 0) - getPendingReservedAmount(userId));
+}
+
 export function getAllTransactions(): Transaction[] {
   const byId = new Map<string, Transaction>();
   memoryTransactions.forEach(tx => {
@@ -1616,6 +1664,38 @@ export function getAllTransactions(): Transaction[] {
             : `Saque para ${w.bankName} (${w.iban}) — Aguardando aprovação do Adm`,
         rejectionReason: w.rejectionReason,
         createdAt: w.createdAt
+      });
+    }
+  });
+
+  // Garantir que todo pedido de compra (oficial ou revenda) aparece sempre no extrato/movimentos
+  memoryOrders.forEach(o => {
+    if (!o || !o.id) return;
+    const txId = `tx_ord_${o.id}`;
+    if (!byId.has(txId)) {
+      const mappedStatus: Transaction['status'] =
+        o.status === 'aguardando_aprovacao' || o.status === 'aguardando_pagamento'
+          ? 'pendente'
+          : o.status === 'cancelado'
+          ? 'recusada'
+          : 'confirmada';
+      const itemLabel = o.items.map(it => `${it.quantity}x ${it.name}`).join(', ') || 'Artigo BABA';
+      byId.set(txId, {
+        id: txId,
+        userId: o.buyerId,
+        userName: o.buyerName,
+        type: o.source === 'revenda' ? 'compra_revenda' : 'compra_oficial',
+        amount: -(Number(o.totalAmount) || 0),
+        status: mappedStatus,
+        reference: o.paymentReference || o.id,
+        description:
+          mappedStatus === 'confirmada'
+            ? `${o.source === 'revenda' ? 'Compra Revenda' : 'Compra Oficial'} Aprovada: ${itemLabel}`
+            : mappedStatus === 'recusada'
+            ? `${o.source === 'revenda' ? 'Compra Revenda' : 'Compra Oficial'} Recusada: ${itemLabel}${o.rejectionReason ? ` — Motivo: ${o.rejectionReason}` : ''}`
+            : `${o.source === 'revenda' ? 'Compra Revenda P2P' : 'Compra Oficial'}: ${itemLabel} — Aguardando aprovação do Adm`,
+        rejectionReason: o.rejectionReason,
+        createdAt: o.createdAt
       });
     }
   });
@@ -1920,15 +2000,13 @@ export function requestWithdrawal(
   }
 
   const wallet = getWallet(userId);
-  const pendingWithdrawalsSum = memoryWithdrawals
-    .filter(w => w && w.userId === userId && w.status === 'pendente')
-    .reduce((acc, w) => acc + (Number(w.amount) || 0), 0);
-  const withdrawableBalance = Math.max(0, wallet.availableBalance - pendingWithdrawalsSum);
+  const reservedSum = getPendingReservedAmount(userId);
+  const withdrawableBalance = Math.max(0, wallet.availableBalance - reservedSum);
 
   if (numericAmount > withdrawableBalance) {
-    if (pendingWithdrawalsSum > 0 && numericAmount <= wallet.availableBalance) {
+    if (reservedSum > 0 && numericAmount <= wallet.availableBalance) {
       throw new Error(
-        `Já tens ${formatMoney(pendingWithdrawalsSum)} em pedidos de saque pendentes de aprovação. Podes sacar até ${formatMoney(withdrawableBalance)}.`
+        `Já tens ${formatMoney(reservedSum)} em movimentos pendentes de aprovação pelo Administrador. Podes movimentar até ${formatMoney(withdrawableBalance)}.`
       );
     }
     throw new Error(`Saldo insuficiente. O teu saldo disponível para levantamento é de ${formatMoney(wallet.availableBalance)}.`);
@@ -2102,15 +2180,17 @@ export function getUserProducts(userId: string): UserProduct[] {
 // ==========================================
 // RESALE LISTINGS (Mercado de Revenda)
 // ==========================================
-export function getResaleListings(): ResaleListing[] {
+export function getAllResaleListings(): ResaleListing[] {
   const base = memoryResaleListings.length > 0 ? memoryResaleListings : INITIAL_RESALE_LISTINGS;
-  return base
-    .filter(l => l.status === 'ativo')
-    .map(l => ({
-      ...l,
-      listingPrice: Math.max(5000, Math.min(450000, Number(l.listingPrice) || 5000)),
-      originalPrice: Math.max(5000, Math.min(450000, Number(l.originalPrice) || 5000))
-    }));
+  return base.map(l => ({
+    ...l,
+    listingPrice: Math.max(5000, Math.min(450000, Number(l.listingPrice) || 5000)),
+    originalPrice: Math.max(5000, Math.min(450000, Number(l.originalPrice) || 5000))
+  }));
+}
+
+export function getResaleListings(): ResaleListing[] {
+  return getAllResaleListings().filter(l => l.status === 'ativo');
 }
 
 export function createResaleListing(
@@ -2127,10 +2207,18 @@ export function createResaleListing(
   if (upIdx === -1) throw new Error('Produto não encontrado no teu inventário');
 
   const userProd = memoryUserProducts[upIdx];
+  if (userProd.status === 'vendido') {
+    throw new Error('Este artigo já foi vendido.');
+  }
   const user = getUsers().find(u => u.id === sellerId);
+  const isAdmin =
+    sellerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    sellerId === 'usr_admin' ||
+    user?.role === 'admin';
+  const nowIso = new Date().toISOString();
 
   const newListing: ResaleListing = {
-    id: `list_${Date.now()}`,
+    id: `list_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
     userProductId,
     sellerId,
     sellerName: user ? user.name : 'Vendedor BABA',
@@ -2141,9 +2229,10 @@ export function createResaleListing(
     minAcceptablePrice: minAcceptablePrice || Math.round(listingPrice * 0.8),
     customDescription: customDescription || userProd.productName,
     allowNegotiation,
-    status: 'ativo',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    status: isAdmin ? 'ativo' : 'pendente',
+    selectedColor: userProd.selectedColor,
+    createdAt: nowIso,
+    updatedAt: nowIso,
     imageUrl: userProd.productImage
   };
 
@@ -2153,15 +2242,99 @@ export function createResaleListing(
   backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
   backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
 
+  if (!isAdmin) {
+    createNotification(
+      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      'Novo Anúncio de Revenda Pendente 📦',
+      `${newListing.sellerName} submeteu "${newListing.productName}" por ${formatMoney(listingPrice)} para aprovação no Mercado de Revenda.`,
+      'sistema',
+      'admin',
+      newListing.id
+    );
+  }
+
   dispatchDbChange();
-  setDoc(doc(firestore, 'resale_listings', newListing.id), newListing).catch(err =>
+  setDoc(doc(firestore, 'resale_listings', newListing.id), cleanForFirestore(newListing)).catch(err =>
     console.warn('Firestore listing note:', err)
   );
-  setDoc(doc(firestore, 'user_products', userProd.id), userProd, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'user_products', userProd.id), cleanForFirestore(userProd), { merge: true }).catch(err =>
     console.warn('Firestore user product note:', err)
   );
 
   return newListing;
+}
+
+export function approveResaleListing(listingId: string): ResaleListing {
+  const listIdx = memoryResaleListings.findIndex(l => l.id === listingId);
+  if (listIdx === -1) throw new Error('Anúncio não encontrado');
+  const listing = memoryResaleListings[listIdx];
+  if (listing.status === 'ativo') return listing;
+
+  listing.status = 'ativo';
+  listing.rejectionReason = '';
+  listing.updatedAt = new Date().toISOString();
+
+  const upIdx = memoryUserProducts.findIndex(up => up.id === listing.userProductId);
+  if (upIdx !== -1) {
+    memoryUserProducts[upIdx].status = 'anunciado';
+    backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+    setDoc(doc(firestore, 'user_products', memoryUserProducts[upIdx].id), cleanForFirestore(memoryUserProducts[upIdx]), { merge: true }).catch(() => {});
+  }
+
+  backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+
+  createNotification(
+    listing.sellerId,
+    'Anúncio de Revenda Aprovado! ✅',
+    `O teu anúncio "${listing.productName}" (${formatMoney(listing.listingPrice)}) foi aprovado pelo Administrador e já está visível no Mercado de Revenda.`,
+    'venda',
+    'produto',
+    listing.id
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'resale_listings', listingId), cleanForFirestore(listing), { merge: true }).catch(err =>
+    console.warn('Firestore listing approve note:', err)
+  );
+  return listing;
+}
+
+export function rejectResaleListing(listingId: string, reason: string): ResaleListing {
+  const cleanReason = (reason || '').trim();
+  if (!cleanReason) {
+    throw new Error('Por favor, escreve o motivo da rejeição do anúncio.');
+  }
+  const listIdx = memoryResaleListings.findIndex(l => l.id === listingId);
+  if (listIdx === -1) throw new Error('Anúncio não encontrado');
+  const listing = memoryResaleListings[listIdx];
+
+  listing.status = 'rejeitado';
+  listing.rejectionReason = cleanReason;
+  listing.updatedAt = new Date().toISOString();
+
+  const upIdx = memoryUserProducts.findIndex(up => up.id === listing.userProductId);
+  if (upIdx !== -1) {
+    memoryUserProducts[upIdx].status = 'disponivel';
+    backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+    setDoc(doc(firestore, 'user_products', memoryUserProducts[upIdx].id), cleanForFirestore(memoryUserProducts[upIdx]), { merge: true }).catch(() => {});
+  }
+
+  backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+
+  createNotification(
+    listing.sellerId,
+    'Anúncio de Revenda Recusado ❌',
+    `O teu anúncio "${listing.productName}" foi recusado pelo Administrador. Motivo: ${cleanReason}`,
+    'sistema',
+    'produto',
+    listing.id
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'resale_listings', listingId), cleanForFirestore(listing), { merge: true }).catch(err =>
+    console.warn('Firestore listing reject note:', err)
+  );
+  return listing;
 }
 
 export function cancelResaleListing(listingId: string, sellerId: string): void {
@@ -2172,11 +2345,12 @@ export function cancelResaleListing(listingId: string, sellerId: string): void {
 
   const listing = memoryResaleListings[listIdx];
   listing.status = 'pausado';
+  listing.updatedAt = new Date().toISOString();
 
   const upIdx = memoryUserProducts.findIndex(up => up.id === listing.userProductId);
   if (upIdx !== -1) {
     memoryUserProducts[upIdx].status = 'disponivel';
-    setDoc(doc(firestore, 'user_products', memoryUserProducts[upIdx].id), memoryUserProducts[upIdx], { merge: true }).catch(err =>
+    setDoc(doc(firestore, 'user_products', memoryUserProducts[upIdx].id), cleanForFirestore(memoryUserProducts[upIdx]), { merge: true }).catch(err =>
       console.warn('Firestore user product cancel note:', err)
     );
   }
@@ -2185,85 +2359,90 @@ export function cancelResaleListing(listingId: string, sellerId: string): void {
   backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
 
   dispatchDbChange();
-  setDoc(doc(firestore, 'resale_listings', listingId), listing, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'resale_listings', listingId), cleanForFirestore(listing), { merge: true }).catch(err =>
     console.warn('Firestore listing cancel note:', err)
   );
 }
 
-export function purchaseResaleListing(
-  listingId: string,
+function executeConfirmedResaleSettlement(
+  listing: ResaleListing,
   buyerId: string,
-  paidPrice: number
-): { id: string } {
-  const listIdx = memoryResaleListings.findIndex(l => l.id === listingId);
-  if (listIdx === -1) throw new Error('Anúncio não encontrado');
-
-  const listing = memoryResaleListings[listIdx];
-  if (listing.sellerId === buyerId) {
-    throw new Error('Não podes comprar o teu próprio anúncio');
-  }
-
+  paidPrice: number,
+  existingOrder?: Order
+): Order {
   const buyerWallet = getWallet(buyerId);
+  const isAdminOrPersona =
+    buyerId.startsWith('persona_') ||
+    buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    buyerId === 'usr_admin';
+
   if (buyerWallet.availableBalance < paidPrice) {
-    if (buyerId.startsWith('persona_') || buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || buyerId === 'usr_admin') {
+    if (isAdminOrPersona) {
       buyerWallet.availableBalance += paidPrice + 10000000;
       buyerWallet.totalDeposited += paidPrice + 10000000;
     } else {
-      throw new Error('Saldo insuficiente na carteira para concluir esta compra');
+      throw new Error(
+        `Saldo insuficiente na carteira de ${existingOrder?.buyerName || 'comprador'} (${formatMoney(buyerWallet.availableBalance)}) para concluir a compra de ${formatMoney(paidPrice)}.`
+      );
     }
   }
 
   const buyerUser = getUsers().find(u => u.id === buyerId);
   const sellerUser = getUsers().find(u => u.id === listing.sellerId);
+  const nowIso = new Date().toISOString();
 
-  // Deduct from buyer
   buyerWallet.availableBalance -= paidPrice;
   buyerWallet.totalSpent += paidPrice;
 
+  const orderId = existingOrder?.id || `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const buyTxId = `tx_ord_${orderId}`;
+  const existingBuyIdx = memoryTransactions.findIndex(t => t.id === buyTxId);
   const buyTx: Transaction = {
-    id: `tx_${Date.now()}_buy`,
+    id: buyTxId,
     userId: buyerId,
-    userName: buyerUser ? buyerUser.name : 'Comprador',
+    userName: existingOrder?.buyerName || (buyerUser ? buyerUser.name : 'Comprador'),
     amount: -paidPrice,
     type: 'compra_revenda',
-    description: `Compra no Mercado de Revenda: ${listing.productName}`,
+    description: `Compra Aprovada no Mercado de Revenda: ${listing.productName}`,
     status: 'confirmada',
-    reference: `REV-${listingId.slice(-6)}`,
-    createdAt: new Date().toISOString()
+    reference: existingOrder?.paymentReference || `REV-${listing.id.slice(-6)}`,
+    createdAt: existingOrder?.createdAt || nowIso
   };
+  if (existingBuyIdx !== -1) {
+    memoryTransactions[existingBuyIdx] = buyTx;
+  } else {
+    memoryTransactions = [buyTx, ...memoryTransactions];
+  }
 
-  // Credit to seller
   const sellerWallet = getWallet(listing.sellerId);
   sellerWallet.availableBalance += paidPrice;
   sellerWallet.totalEarned += paidPrice;
 
   const sellTx: Transaction = {
-    id: `tx_${Date.now()}_sell`,
+    id: `tx_${Date.now()}_sell_${Math.random().toString(36).substring(2, 5)}`,
     userId: listing.sellerId,
-    userName: sellerUser ? sellerUser.name : 'Vendedor',
+    userName: sellerUser ? sellerUser.name : listing.sellerName || 'Vendedor',
     amount: paidPrice,
     type: 'venda_recebida',
-    description: `Venda no Mercado de Revenda: ${listing.productName}`,
+    description: `Venda Aprovada no Mercado de Revenda: ${listing.productName}`,
     status: 'confirmada',
-    reference: `REV-${listingId.slice(-6)}`,
-    createdAt: new Date().toISOString()
+    reference: existingOrder?.paymentReference || `REV-${listing.id.slice(-6)}`,
+    createdAt: nowIso
   };
 
-  memoryTransactions = [buyTx, sellTx, ...memoryTransactions];
+  memoryTransactions = [sellTx, ...memoryTransactions];
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
-  // Mark listing as sold
   listing.status = 'vendido';
-  listing.updatedAt = new Date().toISOString();
+  listing.updatedAt = nowIso;
 
-  // Update open negotiations for this listing
   memoryNegotiations.forEach(n => {
-    if (n.listingId === listingId) {
+    if (n.listingId === listing.id) {
       if (n.buyerId === buyerId || n.status === 'aceite') {
         n.status = 'concluida';
-        n.statusMessage = 'Compra concluída com sucesso!';
+        n.statusMessage = 'Compra aprovada e concluída com sucesso!';
         setDoc(doc(firestore, 'negotiations', n.id), cleanForFirestore(n), { merge: true }).catch(() => {});
-      } else if (n.status === 'pendente' || n.status === 'contraproposta') {
+      } else if (n.status === 'pendente' || n.status === 'contraproposta' || n.status === 'aguardando_adm') {
         n.status = 'cancelada';
         n.statusMessage = 'Artigo adquirido por outro comprador';
         setDoc(doc(firestore, 'negotiations', n.id), cleanForFirestore(n), { merge: true }).catch(() => {});
@@ -2272,14 +2451,14 @@ export function purchaseResaleListing(
   });
   backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
 
-  // Transfer item in user products to buyer
   const oldItemIdx = memoryUserProducts.findIndex(up => up.id === listing.userProductId);
   if (oldItemIdx !== -1) {
     memoryUserProducts[oldItemIdx].status = 'vendido';
+    setDoc(doc(firestore, 'user_products', memoryUserProducts[oldItemIdx].id), cleanForFirestore(memoryUserProducts[oldItemIdx]), { merge: true }).catch(() => {});
   }
 
   const newItem: UserProduct = {
-    id: `up_${Date.now()}`,
+    id: `up_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
     originalProductId: listing.userProductId,
     currentOwnerId: buyerId,
     productName: listing.productName,
@@ -2287,15 +2466,68 @@ export function purchaseResaleListing(
     originalPrice: listing.originalPrice,
     purchasePrice: paidPrice,
     productImage: listing.imageUrl,
-    purchaseDate: new Date().toISOString(),
+    purchaseDate: nowIso,
     status: 'disponivel',
     type: 'fisico',
     condition: 'novo',
+    selectedColor: listing.selectedColor,
     serialNumber: `SN-REV-${Date.now()}`
   };
 
   memoryUserProducts = [newItem, ...memoryUserProducts];
 
+  const confirmedOrder: Order = existingOrder
+    ? {
+        ...existingOrder,
+        status: 'pagamento_confirmado',
+        updatedAt: nowIso
+      }
+    : {
+        id: orderId,
+        buyerId,
+        buyerName: buyerUser ? buyerUser.name : 'Comprador',
+        sellerId: listing.sellerId,
+        sellerName: listing.sellerName,
+        items: [
+          {
+            id: listing.userProductId,
+            productId: listing.id,
+            name: listing.productName,
+            price: paidPrice,
+            quantity: 1,
+            imageUrl: listing.imageUrl,
+            source: 'revenda',
+            userProductId: listing.userProductId,
+            sellerId: listing.sellerId,
+            selectedColor: listing.selectedColor
+          }
+        ],
+        subtotal: paidPrice,
+        shippingFee: 0,
+        totalAmount: paidPrice,
+        deliveryAddress: {
+          province: buyerUser?.province || 'Luanda',
+          city: buyerUser?.city || 'Luanda',
+          street: 'Mercado Interno BABA SHOPPING',
+          recipientName: buyerUser?.name || 'Comprador',
+          recipientPhone: buyerUser?.phone || ''
+        },
+        paymentMethod: 'carteira',
+        paymentReference: `REV-${listing.id.slice(-6)}`,
+        status: 'pagamento_confirmado',
+        source: 'revenda',
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+
+  const ordIdx = memoryOrders.findIndex(o => o.id === confirmedOrder.id);
+  if (ordIdx !== -1) {
+    memoryOrders[ordIdx] = confirmedOrder;
+  } else {
+    memoryOrders = [confirmedOrder, ...memoryOrders];
+  }
+
+  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
   backupToStorage(DB_KEYS.WALLETS, memoryWallets);
   backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
   backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
@@ -2308,29 +2540,161 @@ export function purchaseResaleListing(
     'carteira'
   );
 
+  if (!isAdminOrPersona) {
+    createNotification(
+      buyerId,
+      'Compra P2P Aprovada & Produto Entregue! 📦',
+      `A tua compra de "${listing.productName}" (${formatMoney(paidPrice)}) foi aprovada pelo Administrador e já está em "Meus Produtos".`,
+      'compra',
+      'produto',
+      newItem.id
+    );
+  }
+
   dispatchDbChange();
 
-  // Async Firestore persistence
-  setDoc(doc(firestore, 'wallets', buyerId), buyerWallet, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'wallets', buyerId), cleanForFirestore(buyerWallet), { merge: true }).catch(err =>
     console.warn('Firestore buyer wallet note:', err)
   );
-  setDoc(doc(firestore, 'wallets', listing.sellerId), sellerWallet, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'wallets', listing.sellerId), cleanForFirestore(sellerWallet), { merge: true }).catch(err =>
     console.warn('Firestore seller wallet note:', err)
   );
-  setDoc(doc(firestore, 'resale_listings', listingId), listing, { merge: true }).catch(err =>
+  setDoc(doc(firestore, 'resale_listings', listing.id), cleanForFirestore(listing), { merge: true }).catch(err =>
     console.warn('Firestore sold listing note:', err)
   );
-  setDoc(doc(firestore, 'user_products', newItem.id), newItem).catch(err =>
+  setDoc(doc(firestore, 'user_products', newItem.id), cleanForFirestore(newItem)).catch(err =>
     console.warn('Firestore new item note:', err)
   );
-  setDoc(doc(firestore, 'transactions', buyTx.id), buyTx).catch(err =>
+  setDoc(doc(firestore, 'transactions', buyTx.id), cleanForFirestore(buyTx), { merge: true }).catch(err =>
     console.warn('Firestore buy tx note:', err)
   );
-  setDoc(doc(firestore, 'transactions', sellTx.id), sellTx).catch(err =>
+  setDoc(doc(firestore, 'transactions', sellTx.id), cleanForFirestore(sellTx)).catch(err =>
     console.warn('Firestore sell tx note:', err)
   );
+  setDoc(doc(firestore, 'orders', confirmedOrder.id), cleanForFirestore(confirmedOrder), { merge: true }).catch(err =>
+    console.warn('Firestore order save note:', err)
+  );
 
-  return { id: `ord_${Date.now()}` };
+  return confirmedOrder;
+}
+
+export function purchaseResaleListing(
+  listingId: string,
+  buyerId: string,
+  paidPrice: number
+): { id: string; pendingApproval?: boolean } {
+  const listIdx = memoryResaleListings.findIndex(l => l.id === listingId);
+  if (listIdx === -1) throw new Error('Anúncio não encontrado');
+
+  const listing = memoryResaleListings[listIdx];
+  if (listing.status !== 'ativo') {
+    throw new Error('Este anúncio não está disponível para compra no momento.');
+  }
+  if (listing.sellerId === buyerId) {
+    throw new Error('Não podes comprar o teu próprio anúncio');
+  }
+
+  const buyerUser = getUsers().find(u => u.id === buyerId);
+  const isAdminOrPersona =
+    buyerId.startsWith('persona_') ||
+    buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    buyerId === 'usr_admin' ||
+    buyerUser?.role === 'admin';
+
+  if (isAdminOrPersona) {
+    const confirmed = executeConfirmedResaleSettlement(listing, buyerId, paidPrice);
+    return { id: confirmed.id, pendingApproval: false };
+  }
+
+  const wallet = getWallet(buyerId);
+  const spendable = getSpendableBalance(buyerId);
+  if (paidPrice > spendable) {
+    const reserved = getPendingReservedAmount(buyerId);
+    if (reserved > 0 && paidPrice <= wallet.availableBalance) {
+      throw new Error(
+        `Já tens ${formatMoney(reserved)} em movimentos pendentes de aprovação. O teu saldo livre atual é ${formatMoney(spendable)}.`
+      );
+    }
+    throw new Error('Saldo insuficiente na carteira para solicitar esta compra.');
+  }
+
+  const nowIso = new Date().toISOString();
+  const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const ref = `P2P-${orderId.slice(-6).toUpperCase()}`;
+
+  const pendingOrder: Order = {
+    id: orderId,
+    buyerId,
+    buyerName: buyerUser ? buyerUser.name : 'Cliente',
+    sellerId: listing.sellerId,
+    sellerName: listing.sellerName,
+    items: [
+      {
+        id: listing.userProductId,
+        productId: listing.id,
+        name: listing.productName,
+        price: paidPrice,
+        quantity: 1,
+        imageUrl: listing.imageUrl,
+        source: 'revenda',
+        userProductId: listing.userProductId,
+        sellerId: listing.sellerId,
+        selectedColor: listing.selectedColor
+      }
+    ],
+    subtotal: paidPrice,
+    shippingFee: 0,
+    totalAmount: paidPrice,
+    deliveryAddress: {
+      province: buyerUser?.province || 'Luanda',
+      city: buyerUser?.city || 'Luanda',
+      street: 'Mercado Interno BABA SHOPPING',
+      recipientName: buyerUser?.name || 'Cliente',
+      recipientPhone: buyerUser?.phone || ''
+    },
+    paymentMethod: 'carteira',
+    paymentReference: ref,
+    status: 'aguardando_aprovacao',
+    source: 'revenda',
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+
+  memoryOrders = [pendingOrder, ...memoryOrders];
+  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+
+  const pendingTx: Transaction = {
+    id: `tx_ord_${orderId}`,
+    userId: buyerId,
+    userName: pendingOrder.buyerName,
+    amount: -paidPrice,
+    type: 'compra_revenda',
+    description: `Compra Revenda P2P: ${listing.productName} (Vendedor: ${listing.sellerName}) — Aguardando aprovação do Adm`,
+    status: 'pendente',
+    reference: ref,
+    createdAt: nowIso
+  };
+  memoryTransactions = [pendingTx, ...memoryTransactions];
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
+  createNotification(
+    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    'Nova Compra P2P Pendente de Aprovação 🤝',
+    `${pendingOrder.buyerName} solicitou comprar "${listing.productName}" de ${listing.sellerName} por ${formatMoney(paidPrice)}. Aprova ou recusa no Painel do Adm.`,
+    'compra',
+    'admin',
+    orderId
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'orders', pendingOrder.id), cleanForFirestore(pendingOrder)).catch(err =>
+    console.warn('Firestore pending p2p order note:', err)
+  );
+  setDoc(doc(firestore, 'transactions', pendingTx.id), cleanForFirestore(pendingTx)).catch(err =>
+    console.warn('Firestore pending p2p tx note:', err)
+  );
+
+  return { id: orderId, pendingApproval: true };
 }
 
 // ==========================================
@@ -2339,84 +2703,272 @@ export function purchaseResaleListing(
 export function purchaseOfficialProduct(
   userId: string,
   productId: string,
-  quantity = 1
-): { order: { id: string } } {
+  quantity = 1,
+  selectedColor?: string
+): { order: { id: string; pendingApproval?: boolean } } {
   const prod = getProducts().find(p => p.id === productId);
   if (!prod) throw new Error('Produto não encontrado');
 
   const totalPrice = prod.officialPrice * quantity;
   const wallet = getWallet(userId);
-  if (wallet.availableBalance < totalPrice) {
+  const spendable = getSpendableBalance(userId);
+
+  if (totalPrice > spendable) {
+    const reserved = getPendingReservedAmount(userId);
+    if (reserved > 0 && totalPrice <= wallet.availableBalance) {
+      throw new Error(
+        `Já tens ${formatMoney(reserved)} em movimentos pendentes de aprovação pelo Administrador. Podes movimentar até ${formatMoney(spendable)}.`
+      );
+    }
     throw new Error('Saldo insuficiente na tua carteira digital.');
   }
 
   const user = getUsers().find(u => u.id === userId);
+  const nowIso = new Date().toISOString();
+  const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const ref = `BABA-${orderId.slice(-6).toUpperCase()}`;
 
-  // Deduct from wallet
-  wallet.availableBalance -= totalPrice;
-  wallet.totalSpent += totalPrice;
-
-  const buyTx: Transaction = {
-    id: `tx_${Date.now()}`,
-    userId,
-    userName: user ? user.name : 'Cliente',
-    amount: -totalPrice,
-    type: 'compra_oficial',
-    description: `Compra Oficial: ${quantity}x ${prod.name}`,
-    status: 'confirmada',
-    reference: `BABA-${Date.now().toString().slice(-6)}`,
-    createdAt: new Date().toISOString()
+  // NÃO debita nem entrega em Meus Produtos antes do Adm aprovar
+  const pendingOrder: Order = {
+    id: orderId,
+    buyerId: userId,
+    buyerName: user ? user.name : 'Cliente',
+    items: [
+      {
+        id: prod.id,
+        productId: prod.id,
+        name: prod.name,
+        price: prod.officialPrice,
+        quantity,
+        imageUrl: prod.imageUrl,
+        source: 'oficial',
+        selectedColor: selectedColor || prod.selectedColor
+      }
+    ],
+    subtotal: totalPrice,
+    shippingFee: 0,
+    totalAmount: totalPrice,
+    deliveryAddress: {
+      province: user?.province || 'Luanda',
+      city: user?.city || 'Luanda',
+      street: 'Mercado Oficial BABA SHOPPING',
+      recipientName: user?.name || 'Cliente',
+      recipientPhone: user?.phone || ''
+    },
+    paymentMethod: 'carteira',
+    paymentReference: ref,
+    status: 'aguardando_aprovacao',
+    source: 'oficial',
+    createdAt: nowIso,
+    updatedAt: nowIso
   };
 
-  memoryTransactions = [buyTx, ...memoryTransactions];
+  memoryOrders = [pendingOrder, ...memoryOrders];
+  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+
+  const pendingTx: Transaction = {
+    id: `tx_ord_${orderId}`,
+    userId,
+    userName: pendingOrder.buyerName,
+    amount: -totalPrice,
+    type: 'compra_oficial',
+    description: `Compra Oficial (${quantity}x ${prod.name}) — Aguardando aprovação do Adm`,
+    status: 'pendente',
+    reference: ref,
+    createdAt: nowIso
+  };
+
+  memoryTransactions = [pendingTx, ...memoryTransactions];
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
-  // Credit new items to "Meus Produtos"
-  for (let i = 0; i < quantity; i++) {
-    const newItem: UserProduct = {
-      id: `up_${Date.now()}_${i}`,
-      originalProductId: prod.id,
-      currentOwnerId: userId,
-      productName: prod.name,
-      category: prod.category,
-      originalPrice: prod.officialPrice,
-      purchasePrice: prod.officialPrice,
-      productImage: prod.imageUrl,
-      purchaseDate: new Date().toISOString(),
-      status: 'disponivel',
-      type: prod.type || 'fisico',
-      condition: 'novo',
-      serialNumber: `SN-OFF-${Date.now()}-${i}`
-    };
-    memoryUserProducts = [newItem, ...memoryUserProducts];
-    setDoc(doc(firestore, 'user_products', newItem.id), newItem).catch(err =>
-      console.warn('Firestore add user prod note:', err)
-    );
-  }
-
-  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-  backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
-
-  const orderId = `ord_${Date.now()}`;
   createNotification(
-    userId,
-    'Compra Concluída com Sucesso! 📦',
-    `Compraste ${quantity}x "${prod.name}". O produto já está disponível em "Meus Produtos" para uso ou revenda com a tua margem de lucro.`,
+    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    'Nova Compra Oficial Pendente de Aprovação 🛒',
+    `${pendingOrder.buyerName} solicitou a compra de ${quantity}x "${prod.name}" (${formatMoney(totalPrice)}). Aprova ou recusa no Painel do Adm.`,
     'compra',
-    'produto',
-    prod.id
+    'admin',
+    orderId
   );
 
   dispatchDbChange();
 
-  setDoc(doc(firestore, 'wallets', userId), wallet, { merge: true }).catch(err =>
-    console.warn('Firestore wallet update note:', err)
+  setDoc(doc(firestore, 'orders', pendingOrder.id), cleanForFirestore(pendingOrder)).catch(err =>
+    console.warn('Firestore pending order note:', err)
   );
-  setDoc(doc(firestore, 'transactions', buyTx.id), buyTx).catch(err =>
-    console.warn('Firestore tx update note:', err)
+  setDoc(doc(firestore, 'transactions', pendingTx.id), cleanForFirestore(pendingTx)).catch(err =>
+    console.warn('Firestore pending tx update note:', err)
   );
 
-  return { order: { id: orderId } };
+  return { order: { id: orderId, pendingApproval: true } };
+}
+
+export function approveOrder(orderId: string): Order {
+  const idx = memoryOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) throw new Error('Pedido de compra não encontrado');
+  const order = memoryOrders[idx];
+  if (order.status !== 'aguardando_aprovacao') return order;
+
+  if (order.source === 'revenda') {
+    const firstItem = order.items[0];
+    const listingId = firstItem?.productId;
+    const listing = memoryResaleListings.find(l => l.id === listingId);
+    if (!listing || listing.status !== 'ativo') {
+      throw new Error('Este anúncio já não está ativo no Mercado de Revenda (pode já ter sido vendido ou retirado).');
+    }
+    return executeConfirmedResaleSettlement(listing, order.buyerId, order.totalAmount, order);
+  }
+
+  // Compra Oficial
+  const wallet = getWallet(order.buyerId);
+  if (wallet.availableBalance < order.totalAmount) {
+    throw new Error(
+      `Saldo insuficiente na carteira de ${order.buyerName} (${formatMoney(wallet.availableBalance)}) para debitar ${formatMoney(order.totalAmount)}.`
+    );
+  }
+
+  const nowIso = new Date().toISOString();
+  wallet.availableBalance -= order.totalAmount;
+  wallet.totalSpent += order.totalAmount;
+  memoryWallets[order.buyerId] = wallet;
+  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+
+  const itemSummary = order.items.map(it => `${it.quantity}x ${it.name}`).join(', ');
+  const linkedTxId = `tx_ord_${order.id}`;
+  const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
+  let finalTx: Transaction;
+  if (txIdx !== -1) {
+    finalTx = {
+      ...memoryTransactions[txIdx],
+      status: 'confirmada',
+      description: `Compra Oficial Aprovada & Entregue: ${itemSummary}`
+    };
+    memoryTransactions[txIdx] = finalTx;
+  } else {
+    finalTx = {
+      id: linkedTxId,
+      userId: order.buyerId,
+      userName: order.buyerName,
+      amount: -order.totalAmount,
+      type: 'compra_oficial',
+      description: `Compra Oficial Aprovada & Entregue: ${itemSummary}`,
+      status: 'confirmada',
+      reference: order.paymentReference,
+      createdAt: order.createdAt || nowIso
+    };
+    memoryTransactions = [finalTx, ...memoryTransactions];
+  }
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
+  // Entregar itens em "Meus Produtos"
+  order.items.forEach(item => {
+    const prodMeta = getProducts().find(p => p.id === item.productId);
+    const qty = Math.max(1, Number(item.quantity) || 1);
+    for (let i = 0; i < qty; i++) {
+      const newItem: UserProduct = {
+        id: `up_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 5)}`,
+        originalProductId: item.productId,
+        currentOwnerId: order.buyerId,
+        productName: item.name,
+        category: prodMeta?.category || 'produtos_variados',
+        originalPrice: item.price,
+        purchasePrice: item.price,
+        productImage: item.imageUrl,
+        purchaseDate: nowIso,
+        status: 'disponivel',
+        type: prodMeta?.type || 'fisico',
+        condition: 'novo',
+        selectedColor: item.selectedColor || prodMeta?.selectedColor,
+        serialNumber: `SN-OFF-${Date.now()}-${i}`
+      };
+      memoryUserProducts = [newItem, ...memoryUserProducts];
+      setDoc(doc(firestore, 'user_products', newItem.id), cleanForFirestore(newItem)).catch(err =>
+        console.warn('Firestore add user prod note:', err)
+      );
+    }
+  });
+  backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+
+  order.status = 'pagamento_confirmado';
+  order.updatedAt = nowIso;
+  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+
+  createNotification(
+    order.buyerId,
+    'Compra Oficial Aprovada & Produto Entregue! 📦',
+    `A tua compra de ${itemSummary} (${formatMoney(order.totalAmount)}) foi aprovada pelo Administrador. O produto já está em "Meus Produtos" pronto para revenda!`,
+    'compra',
+    'produto',
+    order.id
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'orders', order.id), cleanForFirestore(order), { merge: true }).catch(() => {});
+  setDoc(doc(firestore, 'wallets', order.buyerId), cleanForFirestore(wallet), { merge: true }).catch(() => {});
+  setDoc(doc(firestore, 'transactions', finalTx.id), cleanForFirestore(finalTx), { merge: true }).catch(() => {});
+
+  return order;
+}
+
+export function rejectOrder(orderId: string, reason: string): Order {
+  const cleanReason = (reason || '').trim();
+  if (!cleanReason) {
+    throw new Error('Por favor, escreve o motivo da rejeição do pedido.');
+  }
+  const idx = memoryOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) throw new Error('Pedido de compra não encontrado');
+  const order = memoryOrders[idx];
+  if (order.status !== 'aguardando_aprovacao') return order;
+
+  const nowIso = new Date().toISOString();
+  order.status = 'cancelado';
+  order.rejectionReason = cleanReason;
+  order.updatedAt = nowIso;
+  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+
+  const itemSummary = order.items.map(it => `${it.quantity}x ${it.name}`).join(', ');
+  const linkedTxId = `tx_ord_${order.id}`;
+  const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
+  const rejectedDesc = `${order.source === 'revenda' ? 'Compra Revenda' : 'Compra Oficial'} Recusada (${itemSummary}) — Motivo: ${cleanReason}`;
+
+  let finalTx: Transaction;
+  if (txIdx !== -1) {
+    finalTx = {
+      ...memoryTransactions[txIdx],
+      status: 'recusada',
+      description: rejectedDesc,
+      rejectionReason: cleanReason
+    };
+    memoryTransactions[txIdx] = finalTx;
+  } else {
+    finalTx = {
+      id: linkedTxId,
+      userId: order.buyerId,
+      userName: order.buyerName,
+      amount: -order.totalAmount,
+      type: order.source === 'revenda' ? 'compra_revenda' : 'compra_oficial',
+      description: rejectedDesc,
+      status: 'recusada',
+      reference: order.paymentReference,
+      rejectionReason: cleanReason,
+      createdAt: order.createdAt || nowIso
+    };
+    memoryTransactions = [finalTx, ...memoryTransactions];
+  }
+  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
+  createNotification(
+    order.buyerId,
+    'Pedido de Compra Recusado ❌',
+    `A tua compra de ${itemSummary} (${formatMoney(order.totalAmount)}) foi recusada pelo Administrador. Motivo: ${cleanReason}. O teu saldo não foi debitado.`,
+    'sistema',
+    'carteira'
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'orders', order.id), cleanForFirestore(order), { merge: true }).catch(() => {});
+  setDoc(doc(firestore, 'transactions', finalTx.id), cleanForFirestore(finalTx), { merge: true }).catch(() => {});
+
+  return order;
 }
 
 // ==========================================
@@ -2427,7 +2979,13 @@ export function getNegotiations(userId: string): Negotiation[] {
   if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin' || user?.role === 'admin') {
     return memoryNegotiations;
   }
-  return memoryNegotiations.filter(n => n.buyerId === userId || n.sellerId === userId || n.buyerId.startsWith(`persona_${userId}`));
+  return memoryNegotiations.filter(n => {
+    // Vendedor não vê propostas antes de serem aprovadas pelo Adm nem propostas rejeitadas pelo Adm
+    if (n.sellerId === userId && (n.status === 'aguardando_adm' || Boolean(n.adminRejectionReason))) {
+      return false;
+    }
+    return n.buyerId === userId || n.sellerId === userId || n.buyerId.startsWith(`persona_${userId}`);
+  });
 }
 
 export function createNegotiation(
@@ -2439,13 +2997,21 @@ export function createNegotiation(
 ): Negotiation {
   const listing = memoryResaleListings.find(l => l.id === listingId);
   if (!listing) throw new Error('Anúncio não encontrado');
+  if (listing.status !== 'ativo') throw new Error('Este anúncio não está disponível para negociação');
   if (listing.sellerId === buyerId && !customBuyerName) {
     throw new Error('Não podes negociar no teu próprio produto');
   }
 
   const buyer = getUsers().find(u => u.id === buyerId);
+  const isAdminOrPersona =
+    Boolean(customBuyerName?.trim()) ||
+    buyerId.startsWith('persona_') ||
+    buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    buyerId === 'usr_admin' ||
+    buyer?.role === 'admin';
   const resolvedBuyerName = customBuyerName?.trim() || (buyer ? buyer.name : 'Comprador Interessado');
   const uniqueNegId = `neg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const nowIso = new Date().toISOString();
 
   const newNeg: Negotiation = {
     id: uniqueNegId,
@@ -2460,8 +3026,10 @@ export function createNegotiation(
     listedPrice: listing.listingPrice,
     currentProposedPrice: proposedPrice,
     lastOfferBy: 'buyer',
-    status: 'pendente',
-    statusMessage: 'Aguardando resposta do vendedor',
+    status: isAdminOrPersona ? 'pendente' : 'aguardando_adm',
+    statusMessage: isAdminOrPersona
+      ? 'Aguardando resposta do vendedor'
+      : 'Proposta enviada — Aguardando aprovação do Administrador',
     messages: initialMessage
       ? [
           {
@@ -2470,25 +3038,36 @@ export function createNegotiation(
             senderId: buyerId,
             senderName: resolvedBuyerName,
             text: initialMessage,
-            timestamp: new Date().toISOString()
+            timestamp: nowIso
           }
         ]
       : [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: nowIso,
+    updatedAt: nowIso
   };
 
   memoryNegotiations = [newNeg, ...memoryNegotiations];
   backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
 
-  createNotification(
-    listing.sellerId,
-    'Nova Proposta de Negociação! 🤝',
-    `${resolvedBuyerName} enviou uma proposta de ${formatMoney(proposedPrice)} para "${listing.productName}".`,
-    'negociacao',
-    'negociacao',
-    newNeg.id
-  );
+  if (isAdminOrPersona) {
+    createNotification(
+      listing.sellerId,
+      'Nova Proposta de Negociação! 🤝',
+      `${resolvedBuyerName} enviou uma proposta de ${formatMoney(proposedPrice)} para "${listing.productName}".`,
+      'negociacao',
+      'negociacao',
+      newNeg.id
+    );
+  } else {
+    createNotification(
+      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      'Nova Proposta P2P Pendente de Aprovação 🤝',
+      `${resolvedBuyerName} enviou proposta de ${formatMoney(proposedPrice)} para "${listing.productName}" (Vendedor: ${listing.sellerName}). Aprova ou recusa no Painel do Adm.`,
+      'negociacao',
+      'admin',
+      newNeg.id
+    );
+  }
 
   dispatchDbChange();
   setDoc(doc(firestore, 'negotiations', newNeg.id), cleanForFirestore(newNeg)).catch(err =>
@@ -2496,6 +3075,72 @@ export function createNegotiation(
   );
 
   return newNeg;
+}
+
+export function approveNegotiationProposal(negotiationId: string): Negotiation {
+  const idx = memoryNegotiations.findIndex(n => n.id === negotiationId);
+  if (idx === -1) throw new Error('Proposta de negociação não encontrada');
+  const neg = memoryNegotiations[idx];
+  if (neg.status !== 'aguardando_adm') return neg;
+
+  neg.status = 'pendente';
+  neg.adminRejectionReason = '';
+  neg.statusMessage = 'Aprovada pelo Adm — Aguardando resposta do vendedor';
+  neg.updatedAt = new Date().toISOString();
+
+  backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+
+  createNotification(
+    neg.sellerId,
+    'Nova Proposta de Negociação! 🤝',
+    `${neg.buyerName} enviou uma proposta de ${formatMoney(neg.currentProposedPrice)} para "${neg.productName}".`,
+    'negociacao',
+    'negociacao',
+    neg.id
+  );
+  createNotification(
+    neg.buyerId,
+    'Proposta Aprovada & Encaminhada! ✅',
+    `A tua proposta de ${formatMoney(neg.currentProposedPrice)} por "${neg.productName}" foi aprovada pelo Administrador e enviada ao vendedor.`,
+    'negociacao',
+    'negociacao',
+    neg.id
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'negotiations', negotiationId), cleanForFirestore(neg), { merge: true }).catch(() => {});
+  return neg;
+}
+
+export function rejectNegotiationProposal(negotiationId: string, reason: string): Negotiation {
+  const cleanReason = (reason || '').trim();
+  if (!cleanReason) {
+    throw new Error('Por favor, escreve o motivo da rejeição da proposta.');
+  }
+  const idx = memoryNegotiations.findIndex(n => n.id === negotiationId);
+  if (idx === -1) throw new Error('Proposta de negociação não encontrada');
+  const neg = memoryNegotiations[idx];
+  if (neg.status !== 'aguardando_adm') return neg;
+
+  neg.status = 'recusada';
+  neg.adminRejectionReason = cleanReason;
+  neg.statusMessage = `Proposta recusada pelo Administrador: ${cleanReason}`;
+  neg.updatedAt = new Date().toISOString();
+
+  backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+
+  createNotification(
+    neg.buyerId,
+    'Proposta de Negociação Recusada ❌',
+    `A tua proposta de ${formatMoney(neg.currentProposedPrice)} por "${neg.productName}" foi recusada pelo Administrador. Motivo: ${cleanReason}`,
+    'sistema',
+    'negociacao',
+    neg.id
+  );
+
+  dispatchDbChange();
+  setDoc(doc(firestore, 'negotiations', negotiationId), cleanForFirestore(neg), { merge: true }).catch(() => {});
+  return neg;
 }
 
 export function respondSellerNegotiation(
@@ -2659,12 +3304,17 @@ export function sendNegotiationMessage(
   if (idx === -1) throw new Error('Negociação não encontrada');
   const neg = memoryNegotiations[idx];
 
-  if (newPrice && newPrice > 0) {
+  if (neg.adminRejectionReason) {
+    throw new Error('Esta proposta foi recusada pelo Administrador e não pode ser reaberta.');
+  }
+
+  const isWaitingAdmin = neg.status === 'aguardando_adm';
+  if (!isWaitingAdmin && newPrice && newPrice > 0) {
     neg.currentProposedPrice = newPrice;
     neg.lastOfferBy = senderId === neg.buyerId ? 'buyer' : 'seller';
     neg.status = 'contraproposta';
     neg.statusMessage = senderId === neg.buyerId ? 'Nova proposta enviada pelo comprador' : 'Nova contraproposta do vendedor';
-  } else if (neg.status === 'recusada') {
+  } else if (!isWaitingAdmin && neg.status === 'recusada') {
     neg.status = 'pendente';
     neg.statusMessage = 'Conversa reaberta para negociação';
   }
@@ -2681,17 +3331,21 @@ export function sendNegotiationMessage(
 
   backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
 
-  const recipientId = senderId === neg.buyerId ? neg.sellerId : neg.buyerId;
+  const recipientId = isWaitingAdmin
+    ? 'kt5dFLArJzV7hCNMQ3ZvgqFokM62'
+    : senderId === neg.buyerId
+    ? neg.sellerId
+    : neg.buyerId;
   createNotification(
     recipientId,
     `Nova mensagem na negociação de "${neg.productName}"`,
     `${senderName}: "${text}"`,
     'negociacao',
-    'negociacao',
+    isWaitingAdmin ? 'admin' : 'negociacao',
     neg.id
   );
 
-  if (senderId === neg.sellerId && neg.buyerId.startsWith('persona_')) {
+  if (!isWaitingAdmin && senderId === neg.sellerId && neg.buyerId.startsWith('persona_')) {
     createNotification(
       'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
       `Nova mensagem de ${senderName} para ${neg.buyerName}`,
@@ -2777,21 +3431,37 @@ export function formatKz(amount: number): string {
 
 export function getOrderStatusLabel(status: string): string {
   switch (status) {
+    case 'aguardando_aprovacao':
+      return 'Pendente de Aprovação do Adm';
+    case 'aguardando_pagamento':
+      return 'Aguardando Pagamento';
+    case 'pagamento_confirmado':
     case 'pago':
-      return 'Liquidado com Sucesso';
+      return 'Aprovado e Liquidado com Sucesso';
     case 'cancelado':
-      return 'Cancelado';
+      return 'Recusado / Cancelado';
     default:
       return status;
   }
 }
 
 export function getOrders(userId?: string): Order[] {
-  return [];
+  const list = [...memoryOrders].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  if (!userId) return list;
+  return list.filter(o => o.buyerId === userId || o.sellerId === userId);
 }
 
 export function updateOrderStatus(orderId: string, status: OrderStatus): any {
-  return { id: orderId, status };
+  const idx = memoryOrders.findIndex(o => o.id === orderId);
+  if (idx === -1) return { id: orderId, status };
+  memoryOrders[idx].status = status;
+  memoryOrders[idx].updatedAt = new Date().toISOString();
+  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+  dispatchDbChange();
+  setDoc(doc(firestore, 'orders', orderId), cleanForFirestore(memoryOrders[idx]), { merge: true }).catch(() => {});
+  return memoryOrders[idx];
 }
 
 export {

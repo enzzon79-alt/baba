@@ -114,7 +114,8 @@ export interface ResaleListing {
   originalPrice: number;
   listingPrice: number;
   customDescription: string;
-  status: 'ativo' | 'vendido' | 'pausado';
+  status: 'pendente' | 'ativo' | 'vendido' | 'pausado' | 'rejeitado';
+  rejectionReason?: string;
   allowNegotiation: boolean;
   minAcceptablePrice: number;
   resaleCycle?: number;
@@ -146,8 +147,9 @@ export interface Negotiation {
   listedPrice: number;
   currentProposedPrice: number;
   lastOfferBy: 'buyer' | 'seller';
-  status: 'pendente' | 'contraproposta' | 'aceite' | 'recusada' | 'concluida' | 'cancelada';
+  status: 'aguardando_adm' | 'pendente' | 'contraproposta' | 'aceite' | 'recusada' | 'concluida' | 'cancelada';
   statusMessage: string;
+  adminRejectionReason?: string;
   createdAt: string;
   updatedAt: string;
   messages: NegotiationMessage[];
@@ -202,6 +204,7 @@ export interface OrderItem {
 }
 
 export type OrderStatus =
+  | 'aguardando_aprovacao'
   | 'aguardando_pagamento'
   | 'pagamento_confirmado'
   | 'em_preparacao'
@@ -224,6 +227,7 @@ export interface Order {
   paymentMethod: 'carteira' | 'multicaixa' | 'transferencia';
   paymentReference: string;
   status: OrderStatus;
+  rejectionReason?: string;
   source: 'oficial' | 'revenda';
   createdAt: string;
   updatedAt: string;
