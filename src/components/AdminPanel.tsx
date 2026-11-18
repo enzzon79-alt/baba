@@ -197,6 +197,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [rejectingUser, setRejectingUser] = useState<User | null>(null);
   const [rejectionReason, setRejectionReason] = useState('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
 
+  // Reject Movement Modal (Depósitos e Saques)
+  const [rejectingMovement, setRejectingMovement] = useState<
+    | { type: 'deposit'; item: DepositRequest }
+    | { type: 'withdrawal'; item: WithdrawalRequest }
+    | null
+  >(null);
+  const [movementRejectionReason, setMovementRejectionReason] = useState('');
+  const [movementRejectionError, setMovementRejectionError] = useState<string | null>(null);
+
   // Suspend / Delete User Modals
   const [suspendingUser, setSuspendingUser] = useState<User | null>(null);
   const [suspensionReason, setSuspensionReason] = useState('Conta suspensa temporariamente pelo Administrador para verificação de segurança.');
@@ -317,13 +326,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleRejectDeposit = (d: DepositRequest) => {
-    try {
-      rejectDeposit(d.id);
-      showAlert(`Depósito de ${formatKz(d.amount)} recusado. O utilizador foi notificado.`, 'error');
-      refreshData();
-    } catch (err: any) {
-      showAlert(err.message || 'Erro ao recusar depósito.', 'error');
-    }
+    setRejectingMovement({ type: 'deposit', item: d });
+    setMovementRejectionReason('');
+    setMovementRejectionError(null);
   };
 
   // -------------------------------------------------------------
@@ -340,12 +345,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleRejectWithdrawal = (w: WithdrawalRequest) => {
+    setRejectingMovement({ type: 'withdrawal', item: w });
+    setMovementRejectionReason('');
+    setMovementRejectionError(null);
+  };
+
+  const handleConfirmRejectMovement = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectingMovement) return;
+    const cleanReason = movementRejectionReason.trim();
+    if (!cleanReason) {
+      setMovementRejectionError('Por favor, escreve o motivo da rejeição para informar o utilizador.');
+      return;
+    }
     try {
-      processWithdrawal(w.id, 'rejeitado');
-      showAlert(`Levantamento de ${formatKz(w.amount)} recusado. O saldo de ${w.userName} não foi debitado e o extrato foi atualizado.`, 'error');
+      if (rejectingMovement.type === 'deposit') {
+        const dep = rejectingMovement.item;
+        rejectDeposit(dep.id, cleanReason);
+        showAlert(`Depósito de ${formatKz(dep.amount)} recusado. Motivo enviado a ${dep.userName}.`, 'error');
+      } else {
+        const wth = rejectingMovement.item;
+        processWithdrawal(wth.id, 'rejeitado', cleanReason);
+        showAlert(`Saque de ${formatKz(wth.amount)} recusado. O saldo de ${wth.userName} não foi debitado e o motivo foi registado.`, 'error');
+      }
+      setRejectingMovement(null);
+      setMovementRejectionReason('');
+      setMovementRejectionError(null);
       refreshData();
     } catch (err: any) {
-      showAlert(err.message || 'Erro ao recusar levantamento.', 'error');
+      setMovementRejectionError(err.message || 'Erro ao registar rejeição.');
     }
   };
 
@@ -807,7 +835,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         id: `mov_dep_${d.id}`,
         type: 'deposito',
         title: `Depósito (${formatPaymentMethodLabel(d.paymentMethod)})`,
-        desc: `${d.userName} • Ref: ${d.reference}`,
+        desc: `${d.userName} • Ref: ${d.reference}${d.status === 'rejeitado' && d.rejectionReason ? ` • Motivo: ${d.rejectionReason}` : ''}`,
         time: new Date(d.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
         rawTime: isNaN(ts) ? Date.now() : ts,
         amount: d.amount,
@@ -825,7 +853,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         id: `mov_wit_${w.id}`,
         type: 'saque',
         title: `Saque para ${w.bankName || 'Banco Angola'}`,
-        desc: `${w.userName} • IBAN: ${w.iban || 'AO06...'}`,
+        desc: `${w.userName} • IBAN: ${w.iban || 'AO06...'}${w.status === 'rejeitado' && w.rejectionReason ? ` • Motivo: ${w.rejectionReason}` : ''}`,
         time: new Date(w.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
         rawTime: isNaN(ts) ? Date.now() : ts,
         amount: w.amount,
@@ -845,7 +873,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         id: `mov_tx_${tx.id}`,
         type: 'transacao',
         title: tx.description || 'Movimento Financeiro',
-        desc: `${tx.userName} • Ref: ${tx.reference}`,
+        desc: `${tx.userName} • Ref: ${tx.reference}${tx.rejectionReason ? ` • Motivo: ${tx.rejectionReason}` : ''}`,
         time: new Date(tx.createdAt || Date.now()).toLocaleString('pt-AO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
         rawTime: isNaN(ts) ? Date.now() : ts,
         amount: Math.abs(tx.amount),
@@ -1570,13 +1598,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         )}
 
                         {mov.kycUser && (
-                          <button
-                            type="button"
-                            onClick={() => handleApproveKYC(mov.kycUser!)}
-                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black cursor-pointer"
-                          >
-                            Aprovar BI
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectingUser(mov.kycUser!);
+                                setRejectionReason('Fotografia do Bilhete de Identidade ilegível. Por favor, carrega uma fotografia nítida da frente e do verso.');
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[11px] font-bold border border-red-500/30 cursor-pointer"
+                            >
+                              Recusar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveKYC(mov.kycUser!)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black cursor-pointer"
+                            >
+                              Aprovar BI
+                            </button>
+                          </div>
                         )}
 
                         <div className="text-right">
@@ -2420,7 +2460,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   <Check className="w-3.5 h-3.5" /> Saldo Creditado
                                 </span>
                               ) : (
-                                <span className="text-[11px] text-red-600 font-bold">Depósito Recusado</span>
+                                <div className="text-right space-y-0.5">
+                                  <span className="text-[11px] text-red-600 font-bold block">Depósito Recusado</span>
+                                  {d.rejectionReason && (
+                                    <span className="text-[10px] text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded inline-block max-w-[200px] truncate" title={d.rejectionReason}>
+                                      Motivo: {d.rejectionReason}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -2518,6 +2565,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <Eye className="w-3.5 h-3.5" />
                             <span>Ver</span>
                           </button>
+                        </div>
+                      )}
+
+                      {!isPending && !isApproved && d.rejectionReason && (
+                        <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 font-semibold">
+                          Motivo da rejeição: {d.rejectionReason}
                         </div>
                       )}
 
@@ -2764,7 +2817,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                   <Check className="w-3.5 h-3.5" /> Aprovado & Debitado (Sucesso)
                                 </span>
                               ) : (
-                                <span className="text-[11px] text-red-600 font-bold">Recusado (Não debitado)</span>
+                                <div className="text-right space-y-0.5">
+                                  <span className="text-[11px] text-red-600 font-bold block">Recusado (Não debitado)</span>
+                                  {w.rejectionReason && (
+                                    <span className="text-[10px] text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded inline-block max-w-[200px] truncate" title={w.rejectionReason}>
+                                      Motivo: {w.rejectionReason}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -2822,6 +2882,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </span>
                         </div>
                       </div>
+
+                      {!isPending && !isProcessed && w.rejectionReason && (
+                        <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 font-semibold">
+                          Motivo da rejeição: {w.rejectionReason}
+                        </div>
+                      )}
 
                       {isPending && (
                         <div className="flex items-center justify-end gap-2 pt-1">
@@ -4238,12 +4304,140 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* ======================================================== */}
+      {/* MODAL: MOTIVO DE REJEIÇÃO DE MOVIMENTO (DEPÓSITO / SAQUE) */}
+      {/* ======================================================== */}
+      {rejectingMovement && (
+        <div
+          onClick={() => setRejectingMovement(null)}
+          className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+        >
+          <form
+            onSubmit={handleConfirmRejectMovement}
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-neutral-200 space-y-4 animate-scaleUp text-neutral-900"
+          >
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5 text-red-600">
+                <XCircle className="w-6 h-6 shrink-0" />
+                <div>
+                  <h3 className="text-base font-black text-neutral-900">
+                    {rejectingMovement.type === 'deposit' ? 'Rejeitar Depósito' : 'Rejeitar Levantamento (Saque)'}
+                  </h3>
+                  <span className="text-[11px] text-neutral-500 block">
+                    Indica o motivo da rejeição para o utilizador
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRejectingMovement(null)}
+                className="p-1 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Utilizador:</span>
+                <strong className="text-neutral-900">{rejectingMovement.item.userName}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Montante:</span>
+                <strong className="text-red-700 tabular-nums">{formatKz(rejectingMovement.item.amount)}</strong>
+              </div>
+              {rejectingMovement.type === 'deposit' ? (
+                <div className="flex justify-between">
+                  <span className="text-neutral-500">Referência:</span>
+                  <span className="font-mono text-neutral-700">{rejectingMovement.item.reference}</span>
+                </div>
+              ) : (
+                <div className="flex justify-between gap-2">
+                  <span className="text-neutral-500 shrink-0">IBAN:</span>
+                  <span className="font-mono text-neutral-700 truncate">{rejectingMovement.item.iban}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black text-neutral-900 block">
+                Motivo da Rejeição (será exibido no extrato e notificação):
+              </label>
+              <textarea
+                value={movementRejectionReason}
+                onChange={e => {
+                  setMovementRejectionReason(e.target.value);
+                  setMovementRejectionError(null);
+                }}
+                rows={3}
+                autoFocus
+                placeholder={
+                  rejectingMovement.type === 'deposit'
+                    ? 'Escreve o motivo da rejeição (ex: comprovativo ilegível, valor divergente...)'
+                    : 'Escreve o motivo da rejeição (ex: IBAN incorreto, titular divergente...)'
+                }
+                className="w-full p-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {(rejectingMovement.type === 'deposit'
+                  ? [
+                      'Comprovativo ilegível ou cortado',
+                      'Valor transferido diferente do solicitado',
+                      'Comprovativo inválido ou já utilizado'
+                    ]
+                  : [
+                      'IBAN incorreto ou incompleto',
+                      'Nome do titular diferente da conta BABA',
+                      'Dados bancários incompatíveis para transferência'
+                    ]
+                ).map(preset => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      setMovementRejectionReason(preset);
+                      setMovementRejectionError(null);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-neutral-100 hover:bg-red-50 text-neutral-700 hover:text-red-700 border border-neutral-200 text-[10px] font-semibold cursor-pointer transition-colors"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {movementRejectionError && (
+              <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs font-bold text-red-700">
+                {movementRejectionError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRejectingMovement(null)}
+                className="px-4 py-2 border border-neutral-300 text-neutral-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-neutral-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-black rounded-xl cursor-pointer shadow-md shadow-red-600/20"
+              >
+                Confirmar Rejeição
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* MODAL: MOTIVO DE REJEIÇÃO DE CADASTRO (BI) */}
       {/* ======================================================== */}
       {rejectingUser && (
         <div
           onClick={() => setRejectingUser(null)}
-          className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+          className="fixed inset-0 z-[140] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
         >
           <div
             onClick={e => e.stopPropagation()}

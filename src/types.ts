@@ -176,6 +176,7 @@ export interface Transaction {
   reference: string;
   description: string;
   paymentMethod?: string;
+  rejectionReason?: string;
   createdAt: string;
 }
 
@@ -237,6 +238,7 @@ export interface DepositRequest {
   reference: string;
   receiptProof?: string;
   status: 'pendente' | 'aprovado' | 'rejeitado';
+  rejectionReason?: string;
   createdAt: string;
 }
 
@@ -249,6 +251,7 @@ export interface WithdrawalRequest {
   iban: string;
   accountHolder: string;
   status: 'pendente' | 'processado' | 'rejeitado';
+  rejectionReason?: string;
   createdAt: string;
 }
 

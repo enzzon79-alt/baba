@@ -1584,9 +1584,10 @@ export function getAllTransactions(): Transaction[] {
           mappedStatus === 'confirmada'
             ? `Carregamento Aprovado pelo Administrador (${d.reference})`
             : mappedStatus === 'recusada'
-            ? `Depósito Recusado pelo Administrador (${d.reference})`
+            ? `Depósito Recusado pelo Administrador (${d.reference})${d.rejectionReason ? ` — Motivo: ${d.rejectionReason}` : ''}`
             : `Depósito via ${d.paymentMethod === 'paypay' ? 'PayPay' : 'Multicaixa Express'} — Aguardando aprovação do Adm`,
         paymentMethod: d.paymentMethod,
+        rejectionReason: d.rejectionReason,
         createdAt: d.createdAt
       });
     }
@@ -1611,8 +1612,9 @@ export function getAllTransactions(): Transaction[] {
           mappedStatus === 'confirmada'
             ? `Saque Aprovado & Debitado — ${w.bankName} (${w.iban})`
             : mappedStatus === 'recusada'
-            ? `Saque Recusado pelo Administrador (${w.bankName})`
+            ? `Saque Recusado pelo Administrador (${w.bankName})${w.rejectionReason ? ` — Motivo: ${w.rejectionReason}` : ''}`
             : `Saque para ${w.bankName} (${w.iban}) — Aguardando aprovação do Adm`,
+        rejectionReason: w.rejectionReason,
         createdAt: w.createdAt
       });
     }
@@ -1842,20 +1844,25 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
   const deposit = memoryDeposits[idx];
   if (deposit.status !== 'pendente') return deposit;
 
+  const cleanReason = (reason || '').trim();
   deposit.status = 'rejeitado';
+  if (cleanReason) {
+    deposit.rejectionReason = cleanReason;
+  }
   backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
 
   const linkedTxId = `tx_dep_${depositId}`;
   const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
-  const rejectedDesc = reason
-    ? `Depósito Recusado (${deposit.reference}): ${reason}`
+  const rejectedDesc = cleanReason
+    ? `Depósito Recusado (${deposit.reference}) — Motivo: ${cleanReason}`
     : `Depósito Recusado pelo Administrador (${deposit.reference})`;
   let finalTx: Transaction;
   if (txIdx !== -1) {
     finalTx = {
       ...memoryTransactions[txIdx],
       status: 'recusada',
-      description: rejectedDesc
+      description: rejectedDesc,
+      ...(cleanReason ? { rejectionReason: cleanReason } : {})
     };
     memoryTransactions[txIdx] = finalTx;
   } else {
@@ -1869,6 +1876,7 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
       status: 'recusada',
       reference: deposit.reference,
       paymentMethod: deposit.paymentMethod,
+      ...(cleanReason ? { rejectionReason: cleanReason } : {}),
       createdAt: deposit.createdAt || new Date().toISOString()
     };
     memoryTransactions = [finalTx, ...memoryTransactions];
@@ -1877,8 +1885,8 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
 
   createNotification(
     deposit.userId,
-    'Depósito Recusado pelo Administrador',
-    `O teu pedido de depósito de ${formatMoney(deposit.amount)} (Ref: ${deposit.reference}) foi recusado.${reason ? ` Motivo: ${reason}` : ''}`,
+    'Depósito Recusado pelo Administrador ❌',
+    `O teu pedido de depósito de ${formatMoney(deposit.amount)} (Ref: ${deposit.reference}) foi recusado.${cleanReason ? ` Motivo: ${cleanReason}` : ''}`,
     'sistema',
     'carteira'
   );
@@ -1894,6 +1902,8 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
   return deposit;
 }
 
+export const MIN_WITHDRAWAL_AMOUNT = 2000;
+
 export function requestWithdrawal(
   userId: string,
   amount: number,
@@ -1903,7 +1913,10 @@ export function requestWithdrawal(
 ): WithdrawalRequest {
   const numericAmount = Number(amount);
   if (!numericAmount || isNaN(numericAmount) || numericAmount <= 0) {
-    throw new Error('Por favor, introduz um montante superior a 0 Kz para sacar.');
+    throw new Error('Por favor, introduz o montante que desejas sacar.');
+  }
+  if (numericAmount < MIN_WITHDRAWAL_AMOUNT) {
+    throw new Error(`O valor mínimo para saque é de ${formatMoney(MIN_WITHDRAWAL_AMOUNT)}.`);
   }
 
   const wallet = getWallet(userId);
@@ -1977,13 +1990,15 @@ export function requestWithdrawal(
 
 export function processWithdrawal(
   withdrawalId: string,
-  status: 'processado' | 'rejeitado'
+  status: 'processado' | 'rejeitado',
+  reason?: string
 ): WithdrawalRequest {
   const idx = memoryWithdrawals.findIndex(w => w.id === withdrawalId);
   if (idx === -1) throw new Error('Pedido de levantamento não encontrado');
   const wth = memoryWithdrawals[idx];
   if (wth.status !== 'pendente') return wth;
 
+  const cleanReason = (reason || '').trim();
   const wallet = getWallet(wth.userId);
   const linkedTxId = `tx_wth_${withdrawalId}`;
   const txIdx = memoryTransactions.findIndex(t => t.id === linkedTxId);
@@ -2007,12 +2022,19 @@ export function processWithdrawal(
       wallet.pendingBalance -= wth.amount;
       wallet.availableBalance += wth.amount;
     }
+    if (cleanReason) {
+      wth.rejectionReason = cleanReason;
+    }
   }
 
   wth.status = status;
   memoryWallets[wth.userId] = wallet;
   backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
   backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+
+  const rejectedDesc = cleanReason
+    ? `Saque Recusado (${wth.bankName}) — Motivo: ${cleanReason}`
+    : `Saque Recusado pelo Administrador (${wth.bankName})`;
 
   let finalTx: Transaction;
   if (txIdx !== -1) {
@@ -2022,7 +2044,8 @@ export function processWithdrawal(
       description:
         status === 'processado'
           ? `Saque Aprovado & Debitado — ${wth.bankName} (${wth.iban})`
-          : `Saque Recusado pelo Administrador (${wth.bankName})`
+          : rejectedDesc,
+      ...(status === 'rejeitado' && cleanReason ? { rejectionReason: cleanReason } : {})
     };
     memoryTransactions[txIdx] = finalTx;
   } else {
@@ -2035,9 +2058,10 @@ export function processWithdrawal(
       description:
         status === 'processado'
           ? `Saque Aprovado & Debitado — ${wth.bankName} (${wth.iban})`
-          : `Saque Recusado pelo Administrador (${wth.bankName})`,
+          : rejectedDesc,
       status: status === 'processado' ? 'confirmada' : 'recusada',
       reference: `WTH-${withdrawalId.slice(-6)}`,
+      ...(status === 'rejeitado' && cleanReason ? { rejectionReason: cleanReason } : {}),
       createdAt: wth.createdAt || new Date().toISOString()
     };
     memoryTransactions = [finalTx, ...memoryTransactions];
@@ -2049,7 +2073,7 @@ export function processWithdrawal(
     status === 'processado' ? 'Levantamento Aprovado & Debitado ✅' : 'Levantamento Recusado ❌',
     status === 'processado'
       ? `O teu saque de ${formatMoney(wth.amount)} foi aprovado pelo Administrador, debitado da tua conta e marcado como Sucesso no extrato.`
-      : `O teu pedido de saque de ${formatMoney(wth.amount)} foi recusado pelo Administrador. O teu saldo disponível não foi alterado.`,
+      : `O teu pedido de saque de ${formatMoney(wth.amount)} foi recusado pelo Administrador.${cleanReason ? ` Motivo: ${cleanReason}` : ''} O teu saldo disponível não foi alterado.`,
     'sistema',
     'carteira'
   );
