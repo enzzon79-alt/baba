@@ -525,6 +525,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     placeholder="ex: domingos.sebastiao@gmail.com"
                     required
                     autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="w-full pl-10 pr-3.5 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
                 </div>
@@ -605,6 +608,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       placeholder="Mínimo 6 caracteres"
                       required
                       minLength={6}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       className="w-full p-3 pr-10 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                     />
                     <button
@@ -628,6 +634,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     placeholder="Repete a senha"
                     required
                     minLength={6}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="w-full p-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
                 </div>
@@ -1027,6 +1036,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     placeholder="Ex: 923 000 000 ou teuemail@gmail.com"
                     required
                     autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="w-full pl-10 pr-3.5 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
                 </div>
@@ -1045,6 +1057,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     placeholder="Digita a tua palavra-passe"
                     required
                     autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="w-full pl-10 pr-10 py-3 bg-neutral-50 border border-neutral-300 rounded-xl text-xs sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                   />
                   <button

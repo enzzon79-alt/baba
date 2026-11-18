@@ -1,10 +1,13 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  initializeFirestore,
   getFirestore,
   collection,
   doc,
   getDocs,
   getDoc,
+  getDocFromServer,
+  getDocsFromServer,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -15,16 +18,23 @@ import {
   limit,
   writeBatch,
   serverTimestamp,
+  type Firestore,
   type Unsubscribe,
   type DocumentData
 } from 'firebase/firestore';
 import {
+  initializeAuth,
   getAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  inMemoryPersistence,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   updateProfile,
+  type Auth,
   type User as FirebaseUser
 } from 'firebase/auth';
 
@@ -41,8 +51,35 @@ export const firebaseConfig = {
 export const firebaseApp =
   getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-export const firestore = getFirestore(firebaseApp);
-export const auth = getAuth(firebaseApp);
+// Force long-polling so Safari (desktop/iOS ITP & iframes) receives real-time onSnapshot updates without WebChannel stalls
+function createSafariSafeFirestore(): Firestore {
+  try {
+    return initializeFirestore(firebaseApp, {
+      experimentalForceLongPolling: true
+    });
+  } catch {
+    return getFirestore(firebaseApp);
+  }
+}
+
+// Resilient Auth persistence chain so Safari Private Mode / iframe ITP never throws on init
+function createSafariSafeAuth(): Auth {
+  try {
+    return initializeAuth(firebaseApp, {
+      persistence: [
+        indexedDBLocalPersistence,
+        browserLocalPersistence,
+        browserSessionPersistence,
+        inMemoryPersistence
+      ]
+    });
+  } catch {
+    return getAuth(firebaseApp);
+  }
+}
+
+export const firestore = createSafariSafeFirestore();
+export const auth = createSafariSafeAuth();
 
 export enum OperationType {
   CREATE = 'create',
@@ -82,6 +119,8 @@ export {
   doc,
   getDocs,
   getDoc,
+  getDocFromServer,
+  getDocsFromServer,
   setDoc,
   updateDoc,
   deleteDoc,

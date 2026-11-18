@@ -164,6 +164,7 @@ export interface Wallet {
   totalSpent: number;
   totalEarned: number;
   totalWithdrawn: number;
+  updatedAt?: string;
 }
 
 export interface Transaction {

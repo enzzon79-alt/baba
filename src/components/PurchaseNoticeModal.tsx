@@ -14,7 +14,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { formatKz } from '../services/db';
-import { compressImageToDataUrl, copyTextToClipboard } from '../utils/image';
+import { readReceiptFileToDataUrl, copyTextToClipboard } from '../utils/image';
 
 export interface PurchaseNotice {
   type: 'insufficient_funds' | 'success' | 'deposit_success';
@@ -88,37 +88,22 @@ export const PurchaseNoticeModal: React.FC<PurchaseNoticeModalProps> = ({
   const handleReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        setErrorMessage('O ficheiro do comprovativo deve ter no máximo 10MB.');
+      if (file.size > 15 * 1024 * 1024) {
+        setErrorMessage('O ficheiro do comprovativo deve ter no máximo 15MB.');
         return;
       }
+      setErrorMessage(null);
       setReceiptProofName(file.name);
-      if (file.type && file.type.startsWith('image/')) {
-        compressImageToDataUrl(file)
-          .then(compressed => {
-            setReceiptProof(compressed);
-            setErrorMessage(null);
-          })
-          .catch(() => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              if (typeof reader.result === 'string') {
-                setReceiptProof(reader.result);
-                setErrorMessage(null);
-              }
-            };
-            reader.readAsDataURL(file);
-          });
-      } else {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          if (typeof reader.result === 'string') {
-            setReceiptProof(reader.result);
-            setErrorMessage(null);
-          }
-        };
-        reader.readAsDataURL(file);
-      }
+      readReceiptFileToDataUrl(file)
+        .then(dataUrl => {
+          setReceiptProof(dataUrl);
+          setErrorMessage(null);
+        })
+        .catch((err: any) => {
+          setReceiptProof(null);
+          setReceiptProofName('');
+          setErrorMessage(err?.message || 'Não foi possível processar o comprovativo selecionado.');
+        });
     }
   };
 

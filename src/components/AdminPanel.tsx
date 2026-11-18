@@ -171,6 +171,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [negotiations, setNegotiations] = useState<Negotiation[]>(() => getNegotiations(currentUser.id));
   const [transactions, setTransactions] = useState<Transaction[]>(() => getAllTransactions());
   const [liveFilter, setLiveFilter] = useState<'all' | 'pendente' | 'deposito' | 'saque' | 'pedidos' | 'kyc' | 'revenda' | 'transacoes'>('all');
+  const [syncTick, setSyncTick] = useState(0);
 
   // Local notifications / alerts
   const [actionAlert, setActionAlert] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -258,6 +259,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setOrders([...getOrders()]);
     setNegotiations([...getNegotiations(currentUser.id)]);
     setTransactions([...getAllTransactions()]);
+    setSyncTick(t => t + 1);
     if (onRefreshState) onRefreshState();
   };
 
@@ -265,6 +267,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     refreshData();
     syncUsersFromFirestore().then(synced => {
       setUsers([...synced]);
+      setSyncTick(t => t + 1);
     });
     syncAdminCollectionsFromFirestore().then(() => {
       refreshData();
@@ -274,19 +277,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   useEffect(() => {
     syncUsersFromFirestore().then(synced => {
       setUsers([...synced]);
+      setSyncTick(t => t + 1);
     });
     syncAdminCollectionsFromFirestore().then(() => {
       refreshData();
     });
     const handleDbChange = () => refreshData();
     const handleFocusSync = () => handleManualRefresh();
+    const handleVisibilitySync = () => {
+      if (document.visibilityState === 'visible') {
+        handleManualRefresh();
+      }
+    };
     window.addEventListener(DB_STATE_EVENT, handleDbChange);
     window.addEventListener('storage', handleDbChange);
     window.addEventListener('focus', handleFocusSync);
+    document.addEventListener('visibilitychange', handleVisibilitySync);
     return () => {
       window.removeEventListener(DB_STATE_EVENT, handleDbChange);
       window.removeEventListener('storage', handleDbChange);
       window.removeEventListener('focus', handleFocusSync);
+      document.removeEventListener('visibilitychange', handleVisibilitySync);
     };
   }, [currentUser.id]);
 
@@ -844,7 +855,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Aggregated System Balances
   const totalSystemBalances = useMemo(() => {
     return users.reduce((acc, u) => acc + (getWallet(u.id)?.availableBalance || 0), 0);
-  }, [users]);
+  }, [users, syncTick]);
 
   const activeMembersCount = useMemo(() => {
     return users.filter(u => u.accountStatus === 'ativo').length;
@@ -896,7 +907,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     });
 
     return list;
-  }, [users, memberSearch, memberStatusFilter, memberProvinceFilter, memberSortBy]);
+  }, [users, memberSearch, memberStatusFilter, memberProvinceFilter, memberSortBy, syncTick]);
 
   const pendingDepositsList = useMemo(() => deposits.filter(d => d.status === 'pendente'), [deposits]);
   const pendingWithdrawalsList = useMemo(() => withdrawals.filter(w => w.status === 'pendente'), [withdrawals]);

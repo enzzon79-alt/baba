@@ -221,9 +221,11 @@ import {
   getActiveCurrency,
   syncUsersFromFirestore,
   syncAdminCollectionsFromFirestore,
-  getUserInviteCode
+  getUserInviteCode,
+  isOnboardingCompleted,
+  markOnboardingCompleted
 } from './services/db';
-import { compressImageToDataUrl, copyTextToClipboard } from './utils/image';
+import { compressImageToDataUrl, readReceiptFileToDataUrl, copyTextToClipboard } from './utils/image';
 
 import {
   CATEGORIES as y,
@@ -1833,28 +1835,15 @@ nn=({product:e,onClose:t,onAddToCart:n,onDirectBuy:r})=>{let[i,a]=(0,_.useState)
   let handleDepositReceiptUpload=(ev: any)=>{
     let file = ev.target.files?.[0];
     if(file){
+      y(null);
       setDepositReceiptFileName(file.name);
-      if (file.type && file.type.startsWith('image/')) {
-        compressImageToDataUrl(file).then((compressed: string) => {
-          setDepositReceiptProof(compressed);
-        }).catch(() => {
-          let reader = new FileReader();
-          reader.onloadend = () => {
-            if(typeof reader.result === 'string'){
-              setDepositReceiptProof(reader.result);
-            }
-          };
-          reader.readAsDataURL(file);
-        });
-      } else {
-        let reader = new FileReader();
-        reader.onloadend = () => {
-          if(typeof reader.result === 'string'){
-            setDepositReceiptProof(reader.result);
-          }
-        };
-        reader.readAsDataURL(file);
-      }
+      readReceiptFileToDataUrl(file).then((dataUrl: string) => {
+        setDepositReceiptProof(dataUrl);
+      }).catch((err: any) => {
+        setDepositReceiptProof(null);
+        setDepositReceiptFileName('');
+        y(err?.message || 'Não foi possível carregar o comprovativo. Tenta outra fotografia.');
+      });
     }
   };
 
@@ -2486,7 +2475,7 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
   NotificationsDrawer = fn;
   CartDrawer = pn;
   ProfileView = gn;
-  (0,_.useEffect)(()=>{ae();syncUsersFromFirestore();syncAdminCollectionsFromFirestore();try{if(typeof window!=='undefined'){let params=new URLSearchParams(window.location.search);let ref=(params.get('ref')||'').trim().toUpperCase();if(ref){localStorage.setItem('baba_ref_code',ref);}}}catch{}},[]);let[e,t]=(0,_.useState)(()=>{try{if(typeof window!=='undefined'&&!localStorage.getItem('baba_onboarding_completed')){return null;}}catch{}return se()}),[authMode,setAuthMode]=(0,_.useState)(()=>{try{if(typeof window!=='undefined'&&!localStorage.getItem('baba_onboarding_completed')){return 'presentation';}}catch{}return null}),[purchaseNotice,setPurchaseNotice]=(0,_.useState)(null),[walletAction,setWalletAction]=(0,_.useState)(null),[walletInitialAmount,setWalletInitialAmount]=(0,_.useState)(50000),[,setCurrencyTick]=(0,_.useState)(0),[n,r]=(0,_.useState)(()=>e?N(e.id):null),[i,a]=(0,_.useState)(()=>me()),[o,s]=(0,_.useState)(()=>ve()),[c,l]=(0,_.useState)(()=>e?_e(e.id):[]),[u,d]=(0,_.useState)(()=>e?Fe(e.id):[]),[f,p]=(0,_.useState)(()=>e?Me(e.id):[]),[m,h]=(0,_.useState)(()=>{try{let u=se();if(u&&(u.role==='admin'||u.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'))return'admin';}catch{}return'inicio';}),[g,v]=(0,_.useState)(void 0),[y,b]=(0,_.useState)(``),[x,S]=(0,_.useState)(!1),[C,w]=(0,_.useState)(!1),[T,E]=(0,_.useState)(!1),[D,ee]=(0,_.useState)([]),[te,ne]=(0,_.useState)(null),O=(0,_.useCallback)(()=>{let u=se();if(u){if(u.role==='admin'||u.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'||u.id==='usr_admin'){u.accountStatus='ativo';}t(u);r(N(u.id));l(_e(u.id));d(Fe(u.id));p(Me(u.id));}else{t(null);}a(me());s(ve());},[]);(0,_.useEffect)(()=>{let e=()=>{O()};window.addEventListener(re,e);let curHandler=()=>setCurrencyTick(t=>t+1);window.addEventListener("baba_currency_change",curHandler);return()=>{window.removeEventListener(re,e);window.removeEventListener("baba_currency_change",curHandler)}},[O]);
+  (0,_.useEffect)(()=>{ae();syncUsersFromFirestore();syncAdminCollectionsFromFirestore();try{if(typeof window!=='undefined'){let params=new URLSearchParams(window.location.search);let ref=(params.get('ref')||'').trim().toUpperCase();if(ref){localStorage.setItem('baba_ref_code',ref);}}}catch{}},[]);let[e,t]=(0,_.useState)(()=>{if(!isOnboardingCompleted()){return null;}return se()}),[authMode,setAuthMode]=(0,_.useState)(()=>{if(!isOnboardingCompleted()){return 'presentation';}return null}),[purchaseNotice,setPurchaseNotice]=(0,_.useState)(null),[walletAction,setWalletAction]=(0,_.useState)(null),[walletInitialAmount,setWalletInitialAmount]=(0,_.useState)(50000),[,setCurrencyTick]=(0,_.useState)(0),[n,r]=(0,_.useState)(()=>e?{...N(e.id)}:null),[i,a]=(0,_.useState)(()=>me()),[o,s]=(0,_.useState)(()=>ve()),[c,l]=(0,_.useState)(()=>e?_e(e.id):[]),[u,d]=(0,_.useState)(()=>e?Fe(e.id):[]),[f,p]=(0,_.useState)(()=>e?Me(e.id):[]),[m,h]=(0,_.useState)(()=>{try{let u=se();if(u&&(u.role==='admin'||u.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'))return'admin';}catch{}return'inicio';}),[g,v]=(0,_.useState)(void 0),[y,b]=(0,_.useState)(``),[x,S]=(0,_.useState)(!1),[C,w]=(0,_.useState)(!1),[T,E]=(0,_.useState)(!1),[D,ee]=(0,_.useState)([]),[te,ne]=(0,_.useState)(null),O=(0,_.useCallback)(()=>{let u=se();if(u){if(u.role==='admin'||u.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'||u.id==='usr_admin'){u={...u,accountStatus:'ativo'};}else{u={...u};}t(u);r({...N(u.id)});l(_e(u.id));d(Fe(u.id));p(Me(u.id));}else{t(null);}a(me());s(ve());},[]);(0,_.useEffect)(()=>{let onDb=()=>{O()};let onVis=()=>{if(document.visibilityState==='visible'){O();}};window.addEventListener(re,onDb);document.addEventListener('visibilitychange',onVis);let curHandler=()=>setCurrencyTick(t=>t+1);window.addEventListener("baba_currency_change",curHandler);return()=>{window.removeEventListener(re,onDb);document.removeEventListener('visibilitychange',onVis);window.removeEventListener("baba_currency_change",curHandler)}},[O]);
   if (!e || authMode) {
     return (0, V.jsx)(AuthPage, {
       onLoginSuccess: (user: any) => {
@@ -2498,9 +2487,7 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
           t(user);
         }
         setAuthMode(null);
-        try {
-          localStorage.setItem('baba_onboarding_completed', 'true');
-        } catch {}
+        markOnboardingCompleted(true);
         if (user && (user.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || user.id === 'dR71uBkwU4Z8k52HyDL9TdeXdeR2' || user.role === 'admin')) {
           h('admin');
           v(void 0);
@@ -2643,7 +2630,7 @@ let handleQuickDepositAndBuy = () => {
   }
 };
 let A=(e,t)=>{ee(n=>n.map(n=>{if(n.id===e){let e=n.quantity+t;return e>0?{...n,quantity:e}:null}return n}).filter(Boolean))},oe=e=>{ee(t=>t.filter(t=>t.id!==e))},le=()=>{ee([])},ue=e=>{ne(e),O()},de=(e,t)=>{v(t),h(e)},fe=u.filter(e=>!e.read).length,pe=D.reduce((e,t)=>e+t.quantity,0);
-let handleLogout=()=>{logoutUser();try{localStorage.removeItem('baba_onboarding_completed')}catch{}t(null);setAuthMode('presentation');};
+let handleLogout=()=>{logoutUser();markOnboardingCompleted(false);t(null);setAuthMode('presentation');};
 return(
   <div className="min-h-screen w-full max-w-full overflow-x-clip bg-gradient-to-br from-[#F4F1FF] via-[#FFF7F0] to-[#EEF3FF] text-neutral-900 flex flex-col font-sans">
     {e&&(e.role===`admin`||e.id===`kt5dFLArJzV7hCNMQ3ZvgqFokM62`)&&(

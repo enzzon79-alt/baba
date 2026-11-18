@@ -89,10 +89,14 @@ function getCachedFormatter(locale: string): Intl.NumberFormat {
 let currentActiveCurrency: CurrencyCode = 'BRL';
 
 if (typeof window !== 'undefined') {
-  const saved = localStorage.getItem('baba_selected_currency') as CurrencyCode;
-  if (saved && CURRENCIES[saved]) {
-    currentActiveCurrency = saved;
-  } else {
+  try {
+    const saved = localStorage.getItem('baba_selected_currency') as CurrencyCode;
+    if (saved && CURRENCIES[saved]) {
+      currentActiveCurrency = saved;
+    } else {
+      currentActiveCurrency = 'BRL';
+    }
+  } catch {
     currentActiveCurrency = 'BRL';
   }
 }
@@ -105,7 +109,11 @@ export function setActiveCurrency(code: CurrencyCode): void {
   if (!CURRENCIES[code] || currentActiveCurrency === code) return;
   currentActiveCurrency = code;
   if (typeof window !== 'undefined') {
-    localStorage.setItem('baba_selected_currency', code);
+    try {
+      localStorage.setItem('baba_selected_currency', code);
+    } catch {
+      // Safari private/iframe storage safe
+    }
     window.dispatchEvent(new CustomEvent(CURRENCY_EVENT, { detail: code }));
   }
 }

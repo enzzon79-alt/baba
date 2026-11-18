@@ -60,10 +60,46 @@ export async function compressImageToDataUrl(
     if (compressed.length > 220 * 1024) {
       compressed = render(680, 0.56);
     }
+    // Third pass if still larger than ~240KB so BI front+back or receipts never breach Firestore 1MB doc cap
+    if (compressed.length > 240 * 1024) {
+      compressed = render(540, 0.45);
+    }
     return compressed;
   } catch {
     return rawDataUrl;
   }
+}
+
+export async function readReceiptFileToDataUrl(file: File): Promise<string> {
+  const isImage =
+    (file.type && file.type.startsWith('image/')) ||
+    /\.(jpg|jpeg|png|webp|gif|bmp|heic|heif)$/i.test(file.name || '');
+
+  if (isImage) {
+    const compressed = await compressImageToDataUrl(file, 900, 0.7);
+    if (compressed.length > 750 * 1024) {
+      throw new Error('A imagem selecionada é demasiado pesada mesmo após compressão. Tenta outra fotografia.');
+    }
+    return compressed;
+  }
+
+  // Non-image files (e.g. PDF) cannot be canvas-compressed; enforce ~680KB raw limit so base64 < 1MB Firestore cap
+  if (file.size > 680 * 1024) {
+    throw new Error('O ficheiro PDF do comprovativo excede 680KB. Por favor envia uma captura de ecrã (imagem) ou um PDF mais leve.');
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Falha ao ler o ficheiro do comprovativo.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Erro ao ler o ficheiro selecionado.'));
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
