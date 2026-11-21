@@ -15,7 +15,8 @@ import {
   Calendar,
   CheckCircle2,
   Copy,
-  Check
+  Check,
+  MessageSquare
 } from 'lucide-react';
 import { User as UserType } from '../types';
 import { formatKz } from '../services/db';
@@ -31,6 +32,7 @@ interface ClientInfoModalProps {
   onOpenInvite: () => void;
   onNavigateToWallet: () => void;
   onNavigateToProducts: () => void;
+  onOpenAssistant?: () => void;
 }
 
 export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
@@ -42,7 +44,8 @@ export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
   onSwitchAccount,
   onOpenInvite,
   onNavigateToWallet,
-  onNavigateToProducts
+  onNavigateToProducts,
+  onOpenAssistant
 }) => {
   const [copiedId, setCopiedId] = useState(false);
 
@@ -264,6 +267,32 @@ export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
               </p>
             </button>
           </div>
+
+          {onOpenAssistant && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenAssistant();
+              }}
+              className="w-full p-3.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-800 text-left transition-colors cursor-pointer flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-2.5">
+                <img
+                  src="/assets/aistudio/IMG_4183_faf19f06.jpeg"
+                  alt="Assistente Jeniffer"
+                  className="w-10 h-10 rounded-xl object-cover object-top shrink-0 border border-[#FF6A00]/70"
+                />
+                <div>
+                  <div className="font-bold text-xs text-white">Assistente Jeniffer</div>
+                  <p className="text-[11px] text-neutral-400 leading-tight">
+                    Gerente virtual para dúvidas, pedidos, carteira e encaminhamento ao Adm.
+                  </p>
+                </div>
+              </div>
+              <span className="text-[11px] font-bold text-[#FF6A00] shrink-0">Abrir Chat</span>
+            </button>
+          )}
 
           {/* Action Buttons: Mudar de Conta & Terminar Sessão */}
           <div className="pt-2 border-t border-neutral-200 flex flex-col sm:flex-row items-center gap-2.5">

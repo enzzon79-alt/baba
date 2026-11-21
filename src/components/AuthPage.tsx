@@ -81,6 +81,46 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [step, setStep] = useState<
     'presentation' | 'register_form' | 'processing_data' | 'identity_verification' | 'waiting_approval' | 'login'
   >(initialMode === 'login' ? 'login' : 'presentation');
+  const [activePresPhoto, setActivePresPhoto] = useState(0);
+
+  const presentationPhotos = [
+    {
+      src: '/assets/aistudio/IMG_4204_daec9d3e.jpeg',
+      label: 'Hipermercado Central',
+      title: 'BABASHOPPING Hipermercado Oficial',
+      desc: 'Compras por atacado, eletrónica, eletrodomésticos e artigos originais com qualidade verificada.'
+    },
+    {
+      src: '/assets/aistudio/IMG_4202_ff686759.jpeg',
+      label: 'Instalações & Parque',
+      title: 'Estrutura Moderna & Movimento Diário',
+      desc: 'Lojas amplas e preparadas para atender clientes e revendedores todos os dias em Angola.'
+    },
+    {
+      src: '/assets/aistudio/IMG_4203_e30caa29.jpeg',
+      label: 'Atendimento Familiar',
+      title: 'Experiência Completa para Todos',
+      desc: 'Variedade de categorias num só lugar com garantia oficial BABA Trade Assurance.'
+    },
+    {
+      src: '/assets/aistudio/IMG_4205_664bd030.jpeg',
+      label: 'Caixa & Checkout',
+      title: 'Pagamentos Transparentes e Seguros',
+      desc: 'Controlo rigoroso em Kwanza (Kz), carregamentos rápidos e levantamentos diretos.'
+    },
+    {
+      src: '/assets/aistudio/IMG_4200_e46f5967.jpeg',
+      label: 'Balcão de Entregas',
+      title: 'Stock Organizado e Custódia Oficial',
+      desc: 'Os produtos comprados entram imediatamente em "Meus Produtos" prontos para revender.'
+    },
+    {
+      src: '/assets/aistudio/IMG_4201_fe4c058d.jpeg',
+      label: 'Comunidade & Equipa',
+      title: 'Equipa Dedicada & Clientes Satisfeitos',
+      desc: 'Rede crescente de compradores e revendedores com suporte contínuo na plataforma.'
+    }
+  ];
 
   // Form State - Dados Cadastrais
   const [regName, setRegName] = useState('');
@@ -293,15 +333,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       {/* Top Header com Logótipo Oficial BABA SHOPPING */}
       <div className="w-full flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-neutral-200">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#FF5000] via-[#FF6A00] to-[#FFAA00] flex items-center justify-center text-white shadow-lg shadow-orange-500/25 p-1.5 shrink-0">
-            <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full drop-shadow-sm">
-              <rect x="15" y="15" width="70" height="70" rx="22" fill="#FFFFFF" fillOpacity="0.18" />
-              <path d="M28 32H72L65 72H35L28 32Z" fill="#FFFFFF" />
-              <path d="M40 32V24C40 18.5 44.5 14 50 14C55.5 14 60 18.5 60 24V32" stroke="#FFFFFF" strokeWidth="6" strokeLinecap="round" />
-              <path d="M43 42H57C61 42 63 44 63 47C63 50 61 52 57 52H43V42Z" fill="#FF5000" />
-              <path d="M43 52H59C63.5 52 66 54.5 66 58C66 61.5 63.5 64 59 64H43V52Z" fill="#FF5000" />
-              <circle cx="74" cy="28" r="6" fill="#10B981" />
-            </svg>
+          <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[#FF6A00] border border-orange-400/40 flex items-center justify-center shadow-lg shadow-orange-500/25 shrink-0">
+            <img
+              src="/assets/aistudio/IMG_4197_16a964eb.jpeg"
+              alt="BABA SHOPPING"
+              className="w-full h-full object-cover"
+            />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
@@ -371,6 +408,70 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               <p className="text-xs sm:text-sm text-neutral-300 max-w-lg mx-auto leading-relaxed">
                 A primeira plataforma em Angola onde compras produtos por atacado a preços fixos em Kwanza e revendes com lucro garantido sem intermediários.
               </p>
+            </div>
+
+            {/* Galeria Visual Oficial das Lojas BABA SHOPPING (Todas as 6 Fotografias na Apresentação) */}
+            <div className="px-5 sm:px-8 pt-6 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-black uppercase tracking-wider text-[#FF6A00] flex items-center gap-1.5">
+                  <Store className="w-3.5 h-3.5" />
+                  <span>Conheça a Nossa Estrutura Real</span>
+                </span>
+                <span className="text-[11px] font-bold text-neutral-500">
+                  Foto {activePresPhoto + 1} de {presentationPhotos.length}
+                </span>
+              </div>
+
+              <div className="relative h-52 sm:h-64 w-full rounded-2xl overflow-hidden border border-neutral-200 shadow-sm group bg-neutral-900">
+                <img
+                  src={presentationPhotos[activePresPhoto].src}
+                  alt={presentationPhotos[activePresPhoto].title}
+                  className="w-full h-full object-cover object-center transition-all duration-500"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/90 via-neutral-950/25 to-transparent" />
+                <div className="absolute bottom-3.5 left-4 right-4 text-white space-y-1">
+                  <span className="inline-block px-2.5 py-0.5 rounded bg-[#FF6A00] text-[10px] font-black uppercase tracking-wider">
+                    {presentationPhotos[activePresPhoto].label}
+                  </span>
+                  <h3 className="text-sm sm:text-base font-black leading-tight">
+                    {presentationPhotos[activePresPhoto].title}
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-neutral-200 leading-snug">
+                    {presentationPhotos[activePresPhoto].desc}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {presentationPhotos.map((photo, idx) => {
+                  const isActive = activePresPhoto === idx;
+                  return (
+                    <button
+                      key={photo.src}
+                      type="button"
+                      onClick={() => setActivePresPhoto(idx)}
+                      className={`relative rounded-xl overflow-hidden border-2 text-left transition-all cursor-pointer group ${
+                        isActive
+                          ? 'border-[#FF6A00] ring-2 ring-orange-200 shadow-sm'
+                          : 'border-neutral-200 hover:border-orange-300 opacity-90 hover:opacity-100'
+                      }`}
+                    >
+                      <div className="h-20 sm:h-24 w-full overflow-hidden bg-neutral-100">
+                        <img
+                          src={photo.src}
+                          alt={photo.label}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      </div>
+                      <div className={`px-2 py-1.5 text-[10px] sm:text-[11px] font-extrabold truncate ${
+                        isActive ? 'bg-[#FF6A00] text-white' : 'bg-neutral-50 text-neutral-800'
+                      }`}>
+                        {photo.label}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Os 3 Pilares de Funcionamento */}
@@ -1006,13 +1107,24 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         {/* ======================================================== */}
         {step === 'login' && (
           <div className="bg-white rounded-3xl shadow-xl border border-neutral-200 overflow-hidden animate-fadeIn">
-            <div className="bg-neutral-900 text-white p-6 text-center space-y-1">
-              <h2 className="text-xl font-black text-white">
-                Iniciar Sessão na Conta
-              </h2>
-              <p className="text-xs text-neutral-400">
-                Acede à tua carteira, compras oficiais e mercado de revenda.
-              </p>
+            <div className="relative h-36 sm:h-44 w-full overflow-hidden bg-neutral-900">
+              <img
+                src="/assets/aistudio/IMG_4198_ecdbd552.jpeg"
+                alt="Loja Oficial BABASHOPPING com Equipa e Clientes"
+                className="w-full h-full object-cover object-center"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/45 to-transparent" />
+              <div className="absolute bottom-3.5 left-5 right-5 text-white">
+                <span className="inline-block px-2 py-0.5 rounded bg-[#FF6A00] text-[10px] font-black uppercase tracking-wider mb-1">
+                  Acesso Seguro à Conta
+                </span>
+                <h2 className="text-lg sm:text-xl font-black text-white leading-tight">
+                  Iniciar Sessão na BABA SHOPPING
+                </h2>
+                <p className="text-[11px] sm:text-xs text-neutral-300">
+                  Acede à tua carteira, compras oficiais e mercado de revenda.
+                </p>
+              </div>
             </div>
 
             <form onSubmit={handleLoginSubmit} className="p-6 sm:p-8 space-y-4">

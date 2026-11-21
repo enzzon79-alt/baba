@@ -129,6 +129,24 @@ export const InviteFriendsView: React.FC<InviteFriendsViewProps> = ({
 
       {/* Body */}
       <div className={`${isModal ? 'p-5 sm:p-6 overflow-y-auto' : 'bg-white rounded-2xl border border-neutral-200 p-4 sm:p-6 shadow-2xs'} space-y-5 text-left text-xs sm:text-sm`}>
+        {/* Fotografia da Comunidade BABA SHOPPING */}
+        <div className="relative h-40 sm:h-48 w-full rounded-2xl overflow-hidden border border-orange-200 shadow-xs">
+          <img
+            src="/assets/aistudio/IMG_4201_fe4c058d.jpeg"
+            alt="Clientes e Equipa Oficial BABA SHOPPING"
+            className="w-full h-full object-cover object-center"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/85 via-neutral-950/25 to-transparent" />
+          <div className="absolute bottom-3 left-4 right-4 text-white">
+            <span className="inline-block px-2 py-0.5 rounded bg-[#FF6A00] text-[10px] font-black uppercase tracking-wider mb-1">
+              Comunidade BABA SHOPPING
+            </span>
+            <p className="text-xs sm:text-sm font-extrabold leading-snug">
+              Traz amigos para a nossa rede oficial de compras e ganha +1.000 Kz por cada conta validada!
+            </p>
+          </div>
+        </div>
+
         {/* Banner Promo */}
         <div className="p-4 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200/80 space-y-2">
           <div className="flex items-center justify-between gap-2">

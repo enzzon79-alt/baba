@@ -18,7 +18,9 @@ import {
   OrderStatus,
   DepositRequest,
   WithdrawalRequest,
-  Notification
+  Notification,
+  AssistantConversation,
+  AssistantMessage
 } from '../types';
 import {
   INITIAL_USERS,
@@ -32,23 +34,11 @@ import {
   INITIAL_NEGOTIATIONS
 } from '../data/mockData';
 import {
-  firestore,
   auth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
-  updateProfile,
-  collection,
-  doc,
-  getDocs,
-  getDoc,
-  getDocFromServer,
-  getDocsFromServer,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  writeBatch
+  updateProfile
 } from './firebase';
 
 export const DB_KEYS = {
@@ -64,7 +54,8 @@ export const DB_KEYS = {
   DEPOSITS: 'baba_deposits_v9',
   WITHDRAWALS: 'baba_withdrawals_v9',
   NOTIFICATIONS: 'baba_notifications_v9',
-  ORDERS: 'baba_orders_v9'
+  ORDERS: 'baba_orders_v9',
+  ASSISTANT_CONVERSATIONS: 'baba_assistant_conversations_v1'
 };
 
 export const DB_STATE_EVENT = 'baba_db_state_changed';
@@ -115,6 +106,7 @@ let memoryNotifications: Notification[] = [];
 let memoryDeposits: DepositRequest[] = [];
 let memoryWithdrawals: WithdrawalRequest[] = [];
 let memoryOrders: Order[] = [];
+let memoryAssistantConversations: AssistantConversation[] = [];
 let memoryCurrentUserId: string | null = safeStorageGet(DB_KEYS.CURRENT_USER_ID);
 let memoryCurrentUserObj: User | null = (() => {
   try {
@@ -161,6 +153,37 @@ function isPendingWrite(colName: string, docId: string): boolean {
   return Boolean(pendingWrites.get(colName)?.has(docId));
 }
 
+function pushDocToServer(
+  colName: string,
+  docId: string,
+  payload: Record<string, any>,
+  merge = true
+): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  return fetch('/api/sync/upsert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    keepalive: true,
+    body: JSON.stringify({ collection: colName, id: docId, data: payload, merge })
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
+function deleteDocOnServer(colName: string, docId: string): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  return fetch('/api/sync/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    keepalive: true,
+    body: JSON.stringify({ collection: colName, id: docId })
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
 function writeDocToFirestore(
   colName: string,
   docId: string,
@@ -169,18 +192,10 @@ function writeDocToFirestore(
 ): Promise<void> {
   markPendingWrite(colName, docId);
   const payload = cleanForFirestore(data);
-  const p = merge
-    ? setDoc(doc(firestore, colName, docId), payload, { merge: true })
-    : setDoc(doc(firestore, colName, docId), payload);
-  return p
-    .catch(err => {
-      console.error(`Firestore write failed (${colName}/${docId}):`, err);
-      throw err;
-    })
-    .finally(() => {
-      // Short grace delay before clearing so an immediate stale snapshot doesn't flicker
-      setTimeout(() => clearPendingWrite(colName, docId), 800);
-    });
+  return pushDocToServer(colName, docId, payload, merge).finally(() => {
+    // Short grace delay before clearing so an immediate SSE echo or poll doesn't flicker
+    setTimeout(() => clearPendingWrite(colName, docId), 400);
+  });
 }
 
 function cleanForFirestore<T extends Record<string, any>>(obj: T): any {
@@ -262,89 +277,7 @@ memoryNotifications = loadFromStorage(DB_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIO
 memoryDeposits = loadFromStorage(DB_KEYS.DEPOSITS, INITIAL_DEPOSITS);
 memoryWithdrawals = loadFromStorage(DB_KEYS.WITHDRAWALS, INITIAL_WITHDRAWALS);
 memoryOrders = loadFromStorage(DB_KEYS.ORDERS, []);
-
-async function performOneTimeFirestoreAdminOnlyPurge(): Promise<void> {
-  const adminId = 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
-  try {
-    const adminRef = doc(firestore, 'users', adminId);
-    const adminSnap = await Promise.race([
-      getDoc(adminRef).catch(() => null),
-      new Promise<null>(res => setTimeout(() => res(null), 2500))
-    ]);
-
-    if (!adminSnap) {
-      return;
-    }
-
-    if (adminSnap.exists() && adminSnap.data()?.globalCleanResetVersion === ADMIN_ONLY_RESET_VERSION) {
-      return;
-    }
-
-    const purgeCollection = async (colName: string, keepDocId?: string) => {
-      try {
-        const snap = await Promise.race([
-          getDocs(collection(firestore, colName)),
-          new Promise<null>(res => setTimeout(() => res(null), 2500))
-        ]);
-        if (!snap) return;
-        const deletions: Promise<void>[] = [];
-        snap.forEach(d => {
-          if (!keepDocId || d.id !== keepDocId) {
-            deletions.push(deleteDoc(doc(firestore, colName, d.id)).catch(() => {}));
-          }
-        });
-        if (deletions.length > 0) {
-          await Promise.all(deletions);
-        }
-      } catch (err) {
-        console.warn(`Firestore purge notice (${colName}):`, err);
-      }
-    };
-
-    await Promise.all([
-      purgeCollection('users', adminId),
-      purgeCollection('wallets', adminId),
-      purgeCollection('resale_listings'),
-      purgeCollection('user_products'),
-      purgeCollection('negotiations'),
-      purgeCollection('notifications'),
-      purgeCollection('deposits'),
-      purgeCollection('withdrawals'),
-      purgeCollection('orders')
-    ]);
-
-    const adminUserData = {
-      ...cleanForFirestore(INITIAL_USERS[0]),
-      globalCleanResetVersion: ADMIN_ONLY_RESET_VERSION
-    };
-    await setDoc(adminRef, adminUserData, { merge: true }).catch(() => {});
-    await setDoc(doc(firestore, 'wallets', adminId), INITIAL_WALLETS[adminId], { merge: true }).catch(() => {});
-
-    memoryUsers = [...INITIAL_USERS];
-    memoryWallets = { ...INITIAL_WALLETS };
-    memoryResaleListings = [];
-    memoryUserProducts = [];
-    memoryNegotiations = [];
-    memoryNotifications = [];
-    memoryDeposits = [];
-    memoryWithdrawals = [];
-    memoryTransactions = [];
-    memoryOrders = [];
-    backupToStorage(DB_KEYS.USERS, memoryUsers);
-    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-    backupToStorage(DB_KEYS.RESALE_LISTINGS, []);
-    backupToStorage(DB_KEYS.USER_PRODUCTS, []);
-    backupToStorage(DB_KEYS.NEGOTIATIONS, []);
-    backupToStorage(DB_KEYS.NOTIFICATIONS, []);
-    backupToStorage(DB_KEYS.DEPOSITS, []);
-    backupToStorage(DB_KEYS.WITHDRAWALS, []);
-    backupToStorage(DB_KEYS.TRANSACTIONS, []);
-    backupToStorage(DB_KEYS.ORDERS, []);
-    dispatchDbChange();
-  } catch (err) {
-    console.warn('Admin-only purge note:', err);
-  }
-}
+memoryAssistantConversations = loadFromStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, []);
 
 function mergeListById<T extends { id: string; createdAt?: string; updatedAt?: string }>(
   snapDocs: Array<{ id: string; data: () => any }>,
@@ -389,44 +322,351 @@ function mergeListById<T extends { id: string; createdAt?: string; updatedAt?: s
   return list;
 }
 
-async function fetchCollectionServerFirst(colName: string, timeoutMs = 6000) {
-  const colRef = collection(firestore, colName);
-  const raceWithTimeout = <T,>(p: Promise<T>) =>
-    Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), timeoutMs))]);
-  try {
-    const serverSnap = await raceWithTimeout(getDocsFromServer(colRef));
-    if (serverSnap) return { snap: serverSnap, fromServer: true };
-  } catch {
-    // Fallback to standard getDocs (cache/network)
+let serverSyncInFlight: Promise<boolean> | null = null;
+
+function applyServerDocUpdate(colName: string, id: string, docData: any): void {
+  if (!docData || !id) return;
+  if (isPendingWrite(colName, id)) return;
+
+  if (colName === 'deleted_users') {
+    if (id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && id !== 'usr_admin' && !memoryDeletedUserIds.includes(id)) {
+      memoryDeletedUserIds = [...memoryDeletedUserIds, id];
+      backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
+      memoryUsers = memoryUsers.filter(u => u && u.id !== id);
+      backupToStorage(DB_KEYS.USERS, memoryUsers);
+      dispatchDbChange();
+    }
+    return;
   }
-  try {
-    const snap = await raceWithTimeout(getDocs(colRef));
-    if (snap) return { snap, fromServer: !snap.metadata?.fromCache };
-  } catch {
-    // ignore
+
+  if (colName === 'users') {
+    const isMaster = id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+    if (!isMaster && memoryDeletedUserIds.includes(id)) return;
+    const localMatch = memoryUsers.find(u => u && u.id === id);
+    const nextUser: User = {
+      ...docData,
+      id,
+      accountStatus: isMaster ? 'ativo' : (docData.accountStatus || localMatch?.accountStatus || 'em_processamento'),
+      phone: isMaster ? '+244 932 200 719' : (docData.phone || localMatch?.phone || '+244 923 000 001'),
+      password: isMaster ? 'Adelina25' : (docData.password || localMatch?.password),
+      idCardFront: docData.idCardFront || localMatch?.idCardFront || '',
+      idCardBack: docData.idCardBack || localMatch?.idCardBack || ''
+    };
+    const idx = memoryUsers.findIndex(u => u && u.id === id);
+    if (idx !== -1) {
+      memoryUsers = memoryUsers.map((u, i) => (i === idx ? nextUser : u));
+    } else {
+      memoryUsers = [nextUser, ...memoryUsers];
+    }
+    backupToStorage(DB_KEYS.USERS, memoryUsers);
+    dispatchDbChange();
+    return;
   }
-  return null;
+
+  if (colName === 'wallets') {
+    memoryWallets = {
+      ...memoryWallets,
+      [id]: { ...docData, userId: id }
+    };
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    dispatchDbChange();
+    return;
+  }
+
+  const upsertArray = <T extends { id: string; createdAt?: string; updatedAt?: string }>(
+    arr: T[],
+    sortDesc = true
+  ): T[] => {
+    const next = [{ ...docData, id } as T, ...arr.filter(x => x && x.id !== id)];
+    if (sortDesc) {
+      next.sort((a, b) => {
+        const ta = new Date(a.createdAt || a.updatedAt || 0).getTime();
+        const tb = new Date(b.createdAt || b.updatedAt || 0).getTime();
+        return tb - ta;
+      });
+    }
+    return next;
+  };
+
+  if (colName === 'deposits') {
+    memoryDeposits = upsertArray(memoryDeposits);
+    backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+  } else if (colName === 'withdrawals') {
+    memoryWithdrawals = upsertArray(memoryWithdrawals);
+    backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+  } else if (colName === 'resale_listings') {
+    memoryResaleListings = upsertArray(memoryResaleListings);
+    backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+  } else if (colName === 'user_products') {
+    memoryUserProducts = upsertArray(memoryUserProducts, false);
+    backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+  } else if (colName === 'negotiations') {
+    memoryNegotiations = upsertArray(memoryNegotiations);
+    backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+  } else if (colName === 'notifications') {
+    memoryNotifications = upsertArray(memoryNotifications);
+    backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
+  } else if (colName === 'transactions') {
+    memoryTransactions = upsertArray(memoryTransactions);
+    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+  } else if (colName === 'orders') {
+    memoryOrders = upsertArray(memoryOrders);
+    backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+  } else if (colName === 'products') {
+    memoryProducts = upsertArray(memoryProducts, false);
+    backupToStorage(DB_KEYS.PRODUCTS, memoryProducts);
+  } else if (colName === 'assistant_conversations') {
+    memoryAssistantConversations = upsertArray(memoryAssistantConversations);
+    backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+  }
+  dispatchDbChange();
 }
 
-async function fetchDocServerFirst(colName: string, docId: string, timeoutMs = 4500) {
-  const ref = doc(firestore, colName, docId);
-  const raceWithTimeout = <T,>(p: Promise<T>) =>
-    Promise.race([p, new Promise<null>(res => setTimeout(() => res(null), timeoutMs))]);
-  try {
-    const s = await raceWithTimeout(getDocFromServer(ref));
-    if (s) return s;
-  } catch {
-    // fallback
+function applyServerDocDelete(colName: string, id: string): void {
+  if (!id || isPendingWrite(colName, id)) return;
+  if (colName === 'users') {
+    memoryUsers = memoryUsers.filter(u => u && u.id !== id);
+    backupToStorage(DB_KEYS.USERS, memoryUsers);
+  } else if (colName === 'wallets') {
+    if (memoryWallets[id]) {
+      const next = { ...memoryWallets };
+      delete next[id];
+      memoryWallets = next;
+      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    }
+  } else if (colName === 'resale_listings') {
+    memoryResaleListings = memoryResaleListings.filter(l => l && l.id !== id);
+    backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+  } else if (colName === 'user_products') {
+    memoryUserProducts = memoryUserProducts.filter(up => up && up.id !== id);
+    backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+  } else if (colName === 'assistant_conversations') {
+    memoryAssistantConversations = memoryAssistantConversations.filter(c => c && c.id !== id);
+    backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
   }
-  try {
-    return await raceWithTimeout(getDoc(ref));
-  } catch {
-    return null;
-  }
+  dispatchDbChange();
+}
+
+async function syncFromSharedServer(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if (serverSyncInFlight) return serverSyncInFlight;
+
+  serverSyncInFlight = (async () => {
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
+      const res = await fetch(`/api/sync/state?t=${Date.now()}`, {
+        cache: 'no-store',
+        signal: controller?.signal
+      });
+      if (timer) clearTimeout(timer);
+      if (!res.ok) return false;
+      const json = await res.json();
+      const cols = json?.collections;
+      if (!cols || typeof cols !== 'object') return false;
+
+      const toSnapDocs = (mapObj: Record<string, any> | undefined) =>
+        Object.entries(mapObj || {}).map(([id, val]) => ({
+          id,
+          data: () => val
+        }));
+
+      // 1. Apply deleted_users first
+      const deletedDocs = toSnapDocs(cols.deleted_users);
+      if (deletedDocs.length > 0) {
+        const deletedSet = new Set<string>(memoryDeletedUserIds);
+        deletedDocs.forEach(d => {
+          const uid = d.id || (d.data() as any)?.id;
+          if (uid && uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && uid !== 'usr_admin') {
+            deletedSet.add(uid);
+          }
+        });
+        memoryDeletedUserIds = Array.from(deletedSet);
+        backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
+      }
+
+      // 2. If server store has no users yet, seed initial admin + any local non-deleted records once
+      const serverUsersMap = cols.users || {};
+      if (Object.keys(serverUsersMap).length === 0) {
+        const seedCols: Record<string, Record<string, any>> = {
+          users: {},
+          wallets: {},
+          deposits: {},
+          withdrawals: {},
+          resale_listings: {},
+          user_products: {},
+          negotiations: {},
+          notifications: {},
+          transactions: {},
+          orders: {},
+          products: {}
+        };
+        INITIAL_USERS.forEach(u => {
+          seedCols.users[u.id] = cleanForFirestore(u);
+        });
+        memoryUsers.forEach(u => {
+          if (u && u.id && !memoryDeletedUserIds.includes(u.id)) {
+            seedCols.users[u.id] = cleanForFirestore(u);
+          }
+        });
+        Object.entries(INITIAL_WALLETS).forEach(([uid, w]) => {
+          seedCols.wallets[uid] = cleanForFirestore(w);
+        });
+        Object.entries(memoryWallets).forEach(([uid, w]) => {
+          if (uid && w && !memoryDeletedUserIds.includes(uid)) {
+            seedCols.wallets[uid] = cleanForFirestore(w);
+          }
+        });
+        memoryDeposits.forEach(x => { if (x?.id) seedCols.deposits[x.id] = cleanForFirestore(x); });
+        memoryWithdrawals.forEach(x => { if (x?.id) seedCols.withdrawals[x.id] = cleanForFirestore(x); });
+        memoryResaleListings.forEach(x => { if (x?.id) seedCols.resale_listings[x.id] = cleanForFirestore(x); });
+        memoryUserProducts.forEach(x => { if (x?.id) seedCols.user_products[x.id] = cleanForFirestore(x); });
+        memoryNegotiations.forEach(x => { if (x?.id) seedCols.negotiations[x.id] = cleanForFirestore(x); });
+        memoryNotifications.forEach(x => { if (x?.id) seedCols.notifications[x.id] = cleanForFirestore(x); });
+        memoryTransactions.forEach(x => { if (x?.id) seedCols.transactions[x.id] = cleanForFirestore(x); });
+        memoryOrders.forEach(x => { if (x?.id) seedCols.orders[x.id] = cleanForFirestore(x); });
+        memoryProducts.forEach(x => { if (x?.id) seedCols.products[x.id] = cleanForFirestore(x); });
+
+        await fetch('/api/sync/seed-missing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ collections: seedCols })
+        }).catch(() => {});
+        const reRes = await fetch(`/api/sync/state?t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
+        if (reRes && reRes.ok) {
+          const reJson = await reRes.json();
+          if (reJson?.collections) {
+            Object.assign(cols, reJson.collections);
+          }
+        }
+      }
+
+      // 3. Apply users from server truth
+      const userDocs = toSnapDocs(cols.users);
+      if (userDocs.length > 0) {
+        serverSyncedCols.add('users');
+        const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
+        const mergedUsers: User[] = [];
+        const seenIds = new Set<string>();
+        userDocs.forEach(d => {
+          const u = d.data() as User;
+          if (!u) return;
+          const uid = d.id || u.id;
+          const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+          if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
+          const localMatch = localById.get(uid);
+          seenIds.add(uid);
+          if (isPendingWrite('users', uid) && localMatch) {
+            mergedUsers.push(localMatch);
+            return;
+          }
+          mergedUsers.push({
+            ...u,
+            id: uid,
+            accountStatus: isMaster ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
+            phone: isMaster ? '+244 932 200 719' : (u.phone || localMatch?.phone || '+244 923 000 001'),
+            password: isMaster ? 'Adelina25' : (u.password || localMatch?.password),
+            idCardFront: u.idCardFront || localMatch?.idCardFront || '',
+            idCardBack: u.idCardBack || localMatch?.idCardBack || ''
+          });
+        });
+        memoryUsers.forEach(lu => {
+          if (lu?.id && !seenIds.has(lu.id) && isPendingWrite('users', lu.id) && !memoryDeletedUserIds.includes(lu.id)) {
+            mergedUsers.unshift(lu);
+          }
+        });
+        memoryUsers = mergedUsers;
+        backupToStorage(DB_KEYS.USERS, memoryUsers);
+      }
+
+      // 4. Apply wallets from server truth
+      const walletDocs = toSnapDocs(cols.wallets);
+      if (walletDocs.length > 0) {
+        serverSyncedCols.add('wallets');
+        const nextWallets: Record<string, Wallet> = {};
+        walletDocs.forEach(d => {
+          const w = d.data() as Wallet;
+          if (!w) return;
+          const uid = d.id || w.userId;
+          if (uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && memoryDeletedUserIds.includes(uid)) return;
+          if (isPendingWrite('wallets', uid) && memoryWallets[uid]) {
+            nextWallets[uid] = memoryWallets[uid];
+          } else {
+            nextWallets[uid] = { ...w, userId: uid };
+          }
+        });
+        Object.entries(memoryWallets).forEach(([uid, lw]) => {
+          if (isPendingWrite('wallets', uid) && lw) {
+            nextWallets[uid] = lw;
+          }
+        });
+        memoryWallets = nextWallets;
+        backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+      }
+
+      // 5. Apply all transactional collections
+      memoryDeposits = mergeListById<DepositRequest>(toSnapDocs(cols.deposits), memoryDeposits, 'deposits', true, true);
+      backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+
+      memoryWithdrawals = mergeListById<WithdrawalRequest>(toSnapDocs(cols.withdrawals), memoryWithdrawals, 'withdrawals', true, true);
+      backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+
+      memoryResaleListings = mergeListById<ResaleListing>(toSnapDocs(cols.resale_listings), memoryResaleListings, 'resale_listings', true, true);
+      backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+
+      memoryNegotiations = mergeListById<Negotiation>(toSnapDocs(cols.negotiations), memoryNegotiations, 'negotiations', true, true);
+      backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+
+      memoryTransactions = mergeListById<Transaction>(toSnapDocs(cols.transactions), memoryTransactions, 'transactions', true, true);
+      backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+
+      memoryOrders = mergeListById<Order>(toSnapDocs(cols.orders), memoryOrders, 'orders', true, true);
+      backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+
+      memoryUserProducts = mergeListById<UserProduct>(toSnapDocs(cols.user_products), memoryUserProducts, 'user_products', false, true);
+      backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+
+      memoryNotifications = mergeListById<Notification>(toSnapDocs(cols.notifications), memoryNotifications, 'notifications', true, true);
+      backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
+
+      memoryAssistantConversations = mergeListById<AssistantConversation>(
+        toSnapDocs(cols.assistant_conversations),
+        memoryAssistantConversations,
+        'assistant_conversations',
+        true,
+        true
+      );
+      backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+
+      const prodDocs = toSnapDocs(cols.products);
+      if (prodDocs.length > 0) {
+        const prodsMap = new Map<string, Product>();
+        INITIAL_PRODUCTS.forEach(p => prodsMap.set(p.id, p));
+        prodDocs.forEach(d => {
+          const p = d.data() as Product;
+          if (p && p.id) {
+            prodsMap.set(p.id, { ...(prodsMap.get(p.id) || p), ...p });
+          }
+        });
+        memoryProducts = Array.from(prodsMap.values());
+        backupToStorage(DB_KEYS.PRODUCTS, memoryProducts);
+      }
+
+      dispatchDbChange();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      serverSyncInFlight = null;
+    }
+  })();
+
+  return serverSyncInFlight;
 }
 
 /**
- * Initialize real-time Cloud Firestore listeners on all collections
+ * Initialize real-time Shared Server (SSE) + Cloud Firestore listeners on all collections
  */
 export function initDatabase(): void {
   if (isInitialized) return;
@@ -469,320 +709,67 @@ export function initDatabase(): void {
       } else if (ev.key === DB_KEYS.DELETED_USERS) {
         memoryDeletedUserIds = loadFromStorage(DB_KEYS.DELETED_USERS, []);
         changed = true;
+      } else if (ev.key === DB_KEYS.ASSISTANT_CONVERSATIONS) {
+        memoryAssistantConversations = loadFromStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, []);
+        changed = true;
       }
       if (changed) dispatchDbChange();
     });
 
+    // Real-time Server-Sent Events stream across Chrome, Safari, desktop & mobile
+    let es: EventSource | null = null;
+    const connectSse = () => {
+      if (typeof EventSource === 'undefined') return;
+      try {
+        if (es) es.close();
+        es = new EventSource('/api/sync/stream');
+        es.addEventListener('upsert', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data);
+            if (payload?.collection && payload?.id && payload?.doc) {
+              applyServerDocUpdate(payload.collection, payload.id, payload.doc);
+            }
+          } catch {}
+        });
+        es.addEventListener('delete', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data);
+            if (payload?.collection && payload?.id) {
+              applyServerDocDelete(payload.collection, payload.id);
+            }
+          } catch {}
+        });
+        es.addEventListener('resync', () => {
+          void syncFromSharedServer();
+        });
+        es.addEventListener('connected', () => {
+          void syncFromSharedServer();
+        });
+      } catch {}
+    };
+    connectSse();
+    void syncFromSharedServer();
+
+    // Fallback poll when SSE is throttled or disconnected
+    setInterval(() => {
+      if (!es || es.readyState !== 1) {
+        if (es && es.readyState === 2) connectSse();
+        void syncFromSharedServer();
+      }
+    }, 6000);
+
     // Re-sync immediately when browser tab regains visibility or network reconnects (essential for Safari background throttling)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        void syncUsersFromFirestore();
-        void syncAdminCollectionsFromFirestore();
+        if (!es || es.readyState === 2) connectSse();
+        void syncFromSharedServer();
       }
     });
     window.addEventListener('online', () => {
-      void syncUsersFromFirestore();
-      void syncAdminCollectionsFromFirestore();
+      if (!es || es.readyState === 2) connectSse();
+      void syncFromSharedServer();
     });
   }
-
-  // 1. Subscribe to Firestore Products
-  onSnapshot(
-    collection(firestore, 'products'),
-    async snap => {
-      const prodsMap = new Map<string, Product>();
-      INITIAL_PRODUCTS.forEach(p => prodsMap.set(p.id, p));
-      snap.forEach(d => {
-        const p = d.data() as Product;
-        if (p && p.id) {
-          prodsMap.set(p.id, { ...(prodsMap.get(p.id) || p), ...p });
-        }
-      });
-      memoryProducts = Array.from(prodsMap.values());
-      backupToStorage(DB_KEYS.PRODUCTS, memoryProducts);
-      dispatchDbChange();
-    },
-    err => console.warn('Products live listener notice:', err.message)
-  );
-
-  const mergeFirestoreUsersSnapshot = (
-    snapDocs: Array<{ id: string; data: () => any }>,
-    fromServer = false
-  ) => {
-    if (fromServer) serverSyncedCols.add('users');
-    const hasServerTruth = serverSyncedCols.has('users');
-    const users: User[] = [];
-    const seenIds = new Set<string>();
-    const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
-
-    snapDocs.forEach(d => {
-      const u = d.data() as User;
-      if (u) {
-        const uid = d.id || u.id;
-        const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
-        if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
-        const localMatch = localById.get(uid);
-        seenIds.add(uid);
-        if (isPendingWrite('users', uid) && localMatch) {
-          users.push(localMatch);
-          return;
-        }
-        users.push({
-          ...u,
-          id: uid,
-          accountStatus: isMaster ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
-          phone: isMaster ? '+244 932 200 719' : (u.phone || localMatch?.phone || '+244 923 000 001'),
-          password: isMaster ? 'Adelina25' : (u.password || localMatch?.password),
-          idCardFront: u.idCardFront || localMatch?.idCardFront || '',
-          idCardBack: u.idCardBack || localMatch?.idCardBack || ''
-        });
-      }
-    });
-
-    // Preservar apenas utilizadores locais em escrita pendente ou antes da 1ª resposta do servidor
-    memoryUsers.forEach(lu => {
-      if (
-        lu &&
-        lu.id &&
-        !seenIds.has(lu.id) &&
-        lu.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
-        !memoryDeletedUserIds.includes(lu.id) &&
-        (isPendingWrite('users', lu.id) || !hasServerTruth)
-      ) {
-        users.unshift(lu);
-      }
-    });
-
-    memoryUsers = users;
-    backupToStorage(DB_KEYS.USERS, memoryUsers);
-    dispatchDbChange();
-  };
-
-  void (async () => {
-    // 1b. Subscribe to Deleted Users markers across browsers
-    onSnapshot(
-      collection(firestore, 'deleted_users'),
-      snap => {
-        const remoteDeleted = new Set<string>(memoryDeletedUserIds);
-        snap.forEach(d => {
-          const uid = d.id || (d.data() as any)?.id;
-          if (uid && uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && uid !== 'usr_admin') {
-            remoteDeleted.add(uid);
-          }
-        });
-        if (remoteDeleted.size !== memoryDeletedUserIds.length) {
-          memoryDeletedUserIds = Array.from(remoteDeleted);
-          backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
-          memoryUsers = memoryUsers.filter(u => u && !memoryDeletedUserIds.includes(u.id));
-          backupToStorage(DB_KEYS.USERS, memoryUsers);
-          dispatchDbChange();
-        }
-      },
-      err => console.warn('Deleted users live listener notice:', err.message)
-    );
-
-    // 2. Subscribe to Firestore Users
-    onSnapshot(
-      collection(firestore, 'users'),
-      async snap => {
-        const fromServer = !snap.metadata.fromCache;
-        if (snap.empty && fromServer) {
-          try {
-            const batch = writeBatch(firestore);
-            INITIAL_USERS.forEach(u => {
-              const ref = doc(firestore, 'users', u.id);
-              batch.set(ref, u);
-            });
-            await batch.commit();
-          } catch (err: any) {
-            console.warn('Seeding users note:', err?.message);
-          }
-        } else if (!snap.empty) {
-          mergeFirestoreUsersSnapshot(snap.docs, fromServer);
-        }
-      },
-      err => console.warn('Users live listener notice:', err.message)
-    );
-
-    // 3. Subscribe to Firestore Wallets (Cloud Firestore is Single Source of Truth)
-    onSnapshot(
-      collection(firestore, 'wallets'),
-      async snap => {
-        const fromServer = !snap.metadata.fromCache;
-        if (snap.empty && fromServer) {
-          try {
-            const batch = writeBatch(firestore);
-            Object.values(INITIAL_WALLETS).forEach(w => {
-              const ref = doc(firestore, 'wallets', w.userId);
-              batch.set(ref, w);
-            });
-            await batch.commit();
-          } catch (err: any) {
-            console.warn('Seeding wallets note:', err?.message);
-          }
-        } else if (!snap.empty) {
-          if (fromServer) serverSyncedCols.add('wallets');
-          const walletsMap: Record<string, Wallet> = serverSyncedCols.has('wallets') ? {} : { ...memoryWallets };
-          snap.forEach(d => {
-            const w = d.data() as Wallet;
-            if (!w) return;
-            const uid = d.id || w.userId;
-            if (isPendingWrite('wallets', uid) && memoryWallets[uid]) {
-              walletsMap[uid] = memoryWallets[uid];
-            } else {
-              walletsMap[uid] = { ...w, userId: uid };
-            }
-          });
-          // Preserve any local wallets that currently have an in-flight write
-          Object.entries(memoryWallets).forEach(([uid, lw]) => {
-            if (isPendingWrite('wallets', uid) && lw) {
-              walletsMap[uid] = lw;
-            }
-          });
-          memoryWallets = walletsMap;
-          backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-          dispatchDbChange();
-        }
-      },
-      err => console.warn('Wallets live listener notice:', err.message)
-    );
-
-    // 4. Subscribe to Firestore Resale Listings
-    onSnapshot(
-      collection(firestore, 'resale_listings'),
-      snap => {
-        memoryResaleListings = mergeListById<ResaleListing>(
-          snap.docs,
-          memoryResaleListings,
-          'resale_listings',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
-        dispatchDbChange();
-      },
-      err => console.warn('Listings live listener notice:', err.message)
-    );
-
-    // 5. Subscribe to Firestore User Products (Meus Produtos)
-    onSnapshot(
-      collection(firestore, 'user_products'),
-      snap => {
-        memoryUserProducts = mergeListById<UserProduct>(
-          snap.docs,
-          memoryUserProducts,
-          'user_products',
-          false,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
-        dispatchDbChange();
-      },
-      err => console.warn('User products live listener notice:', err.message)
-    );
-
-    // 6. Subscribe to Firestore Negotiations
-    onSnapshot(
-      collection(firestore, 'negotiations'),
-      snap => {
-        memoryNegotiations = mergeListById<Negotiation>(
-          snap.docs,
-          memoryNegotiations,
-          'negotiations',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
-        dispatchDbChange();
-      },
-      err => console.warn('Negotiations live listener notice:', err.message)
-    );
-
-    // 7. Subscribe to Firestore Notifications
-    onSnapshot(
-      collection(firestore, 'notifications'),
-      snap => {
-        memoryNotifications = mergeListById<Notification>(
-          snap.docs,
-          memoryNotifications,
-          'notifications',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
-        dispatchDbChange();
-      },
-      err => console.warn('Notifications live listener notice:', err.message)
-    );
-
-    // 8. Subscribe to Firestore Deposits
-    onSnapshot(
-      collection(firestore, 'deposits'),
-      snap => {
-        memoryDeposits = mergeListById<DepositRequest>(
-          snap.docs,
-          memoryDeposits,
-          'deposits',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
-        dispatchDbChange();
-      },
-      err => console.warn('Deposits live listener notice:', err.message)
-    );
-
-    // 9. Subscribe to Firestore Withdrawals
-    onSnapshot(
-      collection(firestore, 'withdrawals'),
-      snap => {
-        memoryWithdrawals = mergeListById<WithdrawalRequest>(
-          snap.docs,
-          memoryWithdrawals,
-          'withdrawals',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
-        dispatchDbChange();
-      },
-      err => console.warn('Withdrawals live listener notice:', err.message)
-    );
-
-    // 10. Subscribe to Firestore Transactions
-    onSnapshot(
-      collection(firestore, 'transactions'),
-      snap => {
-        memoryTransactions = mergeListById<Transaction>(
-          snap.docs,
-          memoryTransactions,
-          'transactions',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-        dispatchDbChange();
-      },
-      err => console.warn('Transactions live listener notice:', err.message)
-    );
-
-    // 11. Subscribe to Firestore Orders
-    onSnapshot(
-      collection(firestore, 'orders'),
-      snap => {
-        memoryOrders = mergeListById<Order>(
-          snap.docs,
-          memoryOrders,
-          'orders',
-          true,
-          !snap.metadata.fromCache
-        );
-        backupToStorage(DB_KEYS.ORDERS, memoryOrders);
-        dispatchDbChange();
-      },
-      err => console.warn('Orders live listener notice:', err.message)
-    );
-  })();
 }
 
 // ==========================================
@@ -880,202 +867,18 @@ export function getUserInviteCode(user?: Pick<User, 'id' | 'name'> | null): stri
 
 export async function syncUsersFromFirestore(): Promise<User[]> {
   try {
-    const [delRes, usersRes] = await Promise.all([
-      fetchCollectionServerFirst('deleted_users', 4500),
-      fetchCollectionServerFirst('users', 6000)
-    ]);
-
-    if (delRes?.snap && !delRes.snap.empty) {
-      const deletedSet = new Set<string>(memoryDeletedUserIds);
-      delRes.snap.forEach(d => {
-        const uid = d.id || (d.data() as any)?.id;
-        if (uid && uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && uid !== 'usr_admin') {
-          deletedSet.add(uid);
-        }
-      });
-      memoryDeletedUserIds = Array.from(deletedSet);
-      backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
-    }
-
-    if (usersRes?.snap && !usersRes.snap.empty) {
-      if (usersRes.fromServer) serverSyncedCols.add('users');
-      const localById = new Map(memoryUsers.map(mu => [mu.id, mu]));
-      const merged: User[] = [];
-      const seenIds = new Set<string>();
-
-      usersRes.snap.forEach(d => {
-        const u = d.data() as User;
-        if (!u) return;
-        const uid = d.id || u.id;
-        const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
-        if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
-        const localMatch = localById.get(uid);
-        seenIds.add(uid);
-        if (isPendingWrite('users', uid) && localMatch) {
-          merged.push(localMatch);
-          return;
-        }
-        merged.push({
-          ...u,
-          id: uid,
-          accountStatus: isMaster ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
-          phone: isMaster ? '+244 932 200 719' : (u.phone || localMatch?.phone || '+244 923 000 001'),
-          password: isMaster ? 'Adelina25' : (u.password || localMatch?.password),
-          idCardFront: u.idCardFront || localMatch?.idCardFront || '',
-          idCardBack: u.idCardBack || localMatch?.idCardBack || ''
-        });
-      });
-
-      memoryUsers.forEach(lu => {
-        if (
-          lu &&
-          lu.id &&
-          !seenIds.has(lu.id) &&
-          lu.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
-          !memoryDeletedUserIds.includes(lu.id) &&
-          (isPendingWrite('users', lu.id) || !usersRes.fromServer)
-        ) {
-          merged.unshift(lu);
-        }
-      });
-
-      memoryUsers = merged;
-      backupToStorage(DB_KEYS.USERS, memoryUsers);
-      dispatchDbChange();
-    }
+    await syncFromSharedServer();
   } catch (err) {
-    console.warn('syncUsersFromFirestore notice:', err);
+    console.warn('syncUsersFromSharedServer notice:', err);
   }
   return getUsers();
 }
 
 export async function syncAdminCollectionsFromFirestore(): Promise<void> {
   try {
-    const [depRes, wthRes, listRes, negRes, walRes, txRes, ordRes, upRes, notifRes] = await Promise.all([
-      fetchCollectionServerFirst('deposits'),
-      fetchCollectionServerFirst('withdrawals'),
-      fetchCollectionServerFirst('resale_listings'),
-      fetchCollectionServerFirst('negotiations'),
-      fetchCollectionServerFirst('wallets'),
-      fetchCollectionServerFirst('transactions'),
-      fetchCollectionServerFirst('orders'),
-      fetchCollectionServerFirst('user_products'),
-      fetchCollectionServerFirst('notifications')
-    ]);
-
-    if (depRes?.snap) {
-      memoryDeposits = mergeListById<DepositRequest>(
-        depRes.snap.docs,
-        memoryDeposits,
-        'deposits',
-        true,
-        depRes.fromServer
-      );
-      backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
-    }
-
-    if (wthRes?.snap) {
-      memoryWithdrawals = mergeListById<WithdrawalRequest>(
-        wthRes.snap.docs,
-        memoryWithdrawals,
-        'withdrawals',
-        true,
-        wthRes.fromServer
-      );
-      backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
-    }
-
-    if (listRes?.snap) {
-      memoryResaleListings = mergeListById<ResaleListing>(
-        listRes.snap.docs,
-        memoryResaleListings,
-        'resale_listings',
-        true,
-        listRes.fromServer
-      );
-      backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
-    }
-
-    if (negRes?.snap) {
-      memoryNegotiations = mergeListById<Negotiation>(
-        negRes.snap.docs,
-        memoryNegotiations,
-        'negotiations',
-        true,
-        negRes.fromServer
-      );
-      backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
-    }
-
-    if (walRes?.snap && !walRes.snap.empty) {
-      if (walRes.fromServer) serverSyncedCols.add('wallets');
-      const nextWallets: Record<string, Wallet> = serverSyncedCols.has('wallets') ? {} : { ...memoryWallets };
-      walRes.snap.forEach(d => {
-        const w = d.data() as Wallet;
-        if (!w) return;
-        const uid = d.id || w.userId;
-        if (isPendingWrite('wallets', uid) && memoryWallets[uid]) {
-          nextWallets[uid] = memoryWallets[uid];
-        } else {
-          nextWallets[uid] = { ...w, userId: uid };
-        }
-      });
-      Object.entries(memoryWallets).forEach(([uid, lw]) => {
-        if (isPendingWrite('wallets', uid) && lw) {
-          nextWallets[uid] = lw;
-        }
-      });
-      memoryWallets = nextWallets;
-      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-    }
-
-    if (txRes?.snap) {
-      memoryTransactions = mergeListById<Transaction>(
-        txRes.snap.docs,
-        memoryTransactions,
-        'transactions',
-        true,
-        txRes.fromServer
-      );
-      backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-    }
-
-    if (ordRes?.snap) {
-      memoryOrders = mergeListById<Order>(
-        ordRes.snap.docs,
-        memoryOrders,
-        'orders',
-        true,
-        ordRes.fromServer
-      );
-      backupToStorage(DB_KEYS.ORDERS, memoryOrders);
-    }
-
-    if (upRes?.snap) {
-      memoryUserProducts = mergeListById<UserProduct>(
-        upRes.snap.docs,
-        memoryUserProducts,
-        'user_products',
-        false,
-        upRes.fromServer
-      );
-      backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
-    }
-
-    if (notifRes?.snap) {
-      memoryNotifications = mergeListById<Notification>(
-        notifRes.snap.docs,
-        memoryNotifications,
-        'notifications',
-        true,
-        notifRes.fromServer
-      );
-      backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
-    }
-
-    dispatchDbChange();
+    await syncFromSharedServer();
   } catch (err) {
-    console.warn('syncAdminCollectionsFromFirestore notice:', err);
+    console.warn('syncAdminCollections notice:', err);
   }
 }
 
@@ -1390,6 +1193,9 @@ export async function loginUser(identifier: string, password?: string): Promise<
     if (passTerm !== 'Adelina25') {
       throw new Error('Palavra-passe incorreta! Verifica os teus dados e tenta novamente.');
     }
+    // Sincronizar primeiro todos os dados do servidor partilhado para ter saldo, utilizadores e movimentos exatos
+    await Promise.race([syncFromSharedServer(), new Promise<void>(res => setTimeout(res, 3500))]);
+
     const users = getUsers();
     const admin =
       users.find(u => u && (u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.role === 'admin')) ||
@@ -1410,41 +1216,26 @@ export async function loginUser(identifier: string, password?: string): Promise<
     memoryUsers = [adminUser, ...memoryUsers.filter(u => u && u.id !== adminUser.id && u.id !== 'dR71uBkwU4Z8k52HyDL9TdeXdeR2')];
     backupToStorage(DB_KEYS.USERS, memoryUsers);
 
-    // Ler a carteira oficial do Admin no Cloud Firestore (nunca sobrescrever saldo real!)
-    try {
-      const adminWalletSnap = await fetchDocServerFirst('wallets', adminUser.id, 4000);
-      if (adminWalletSnap && adminWalletSnap.exists()) {
-        memoryWallets[adminUser.id] = { ...(adminWalletSnap.data() as Wallet), userId: adminUser.id };
-        backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-      } else if (adminWalletSnap && !adminWalletSnap.exists()) {
-        const starterAdminWallet: Wallet = {
-          ...(INITIAL_WALLETS[adminUser.id] || {
-            userId: adminUser.id,
-            availableBalance: 50000000,
-            pendingBalance: 0,
-            reservedBalance: 0,
-            totalDeposited: 50000000,
-            totalSpent: 0,
-            totalEarned: 0,
-            totalWithdrawn: 0
-          }),
-          updatedAt: new Date().toISOString()
-        };
-        memoryWallets[adminUser.id] = starterAdminWallet;
-        backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-        writeDocToFirestore('wallets', adminUser.id, starterAdminWallet, true).catch(() => {});
-      }
-    } catch {
-      // fallback safely to real-time listener
+    if (!memoryWallets[adminUser.id]) {
+      const starterAdminWallet: Wallet = {
+        ...(INITIAL_WALLETS[adminUser.id] || {
+          userId: adminUser.id,
+          availableBalance: 50000000,
+          pendingBalance: 0,
+          reservedBalance: 0,
+          totalDeposited: 50000000,
+          totalSpent: 0,
+          totalEarned: 0,
+          totalWithdrawn: 0
+        }),
+        updatedAt: new Date().toISOString()
+      };
+      memoryWallets[adminUser.id] = starterAdminWallet;
+      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+      writeDocToFirestore('wallets', adminUser.id, starterAdminWallet, true).catch(() => {});
     }
 
-    const loggedAdmin = setCurrentUser(adminUser);
-    // Sincronizar imediatamente todos os utilizadores, carteiras e movimentos antes de abrir o Painel
-    await Promise.race([
-      Promise.all([syncUsersFromFirestore(), syncAdminCollectionsFromFirestore()]),
-      new Promise<void>(res => setTimeout(res, 3500))
-    ]);
-    return loggedAdmin;
+    return setCurrentUser(adminUser);
   }
 
   // 2. Sincronizar utilizadores do servidor primeiro quando possível para garantir dados e estado atualizados
@@ -1512,49 +1303,6 @@ export async function loginUser(identifier: string, password?: string): Promise<
     }
   };
 
-  if (!matched && rawId.includes('@')) {
-    try {
-      const cred = await signInWithEmailAndPassword(auth, rawId, passTerm);
-      if (cred?.user) {
-        let fsUser: User | null = null;
-        try {
-          const d = await fetchDocServerFirst('users', cred.user.uid, 3500);
-          if (d && d.exists()) {
-            fsUser = { id: d.id, ...(d.data() as any) } as User;
-          }
-        } catch {}
-
-        if (fsUser && !memoryDeletedUserIds.includes(fsUser.id)) {
-          fsUser.password = fsUser.password || passTerm;
-          await assertAccountApproved(fsUser);
-          memoryUsers = [fsUser, ...memoryUsers.filter(u => u && u.id !== fsUser!.id)];
-          backupToStorage(DB_KEYS.USERS, memoryUsers);
-          try {
-            const wSnap = await fetchDocServerFirst('wallets', fsUser.id, 3000);
-            if (wSnap && wSnap.exists()) {
-              memoryWallets[fsUser.id] = { ...(wSnap.data() as Wallet), userId: fsUser.id };
-              backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-            }
-          } catch {}
-          const logged = setCurrentUser(fsUser);
-          void syncAdminCollectionsFromFirestore();
-          return logged;
-        }
-      }
-    } catch (authOrStatusErr: any) {
-      if (
-        authOrStatusErr?.message &&
-        (authOrStatusErr.message.includes('encontra-se em revisão') ||
-          authOrStatusErr.message.includes('foi rejeitada por motivo') ||
-          authOrStatusErr.message.includes('encontra-se suspensa') ||
-          authOrStatusErr.message.includes('foi eliminada'))
-      ) {
-        throw authOrStatusErr;
-      }
-      // Fall through to strict error below
-    }
-  }
-
   // 4. Se nenhuma conta existente corresponder aos dados -> RECUSAR ENTRADA
   if (!matched) {
     throw new Error('Conta não encontrada! Verifica o teu telefone/email ou cria uma nova conta primeiro.');
@@ -1589,21 +1337,10 @@ export async function loginUser(identifier: string, password?: string): Promise<
   memoryUsers = [activeMatched, ...memoryUsers.filter(u => u && u.id !== activeMatched.id)];
   backupToStorage(DB_KEYS.USERS, memoryUsers);
 
-  // Carregar carteira real do utilizador no Cloud Firestore antes de abrir a app (nunca sobrescrever para 500!)
-  try {
-    const wSnap = await fetchDocServerFirst('wallets', activeMatched.id, 3500);
-    if (wSnap && wSnap.exists()) {
-      memoryWallets[activeMatched.id] = { ...(wSnap.data() as Wallet), userId: activeMatched.id };
-      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-    }
-  } catch {}
-
   if (activeMatched.email) {
     signInWithEmailAndPassword(auth, activeMatched.email, passTerm).catch(() => {});
   }
-  const logged = setCurrentUser(activeMatched);
-  await Promise.race([syncAdminCollectionsFromFirestore(), new Promise<void>(res => setTimeout(res, 2500))]);
-  return logged;
+  return setCurrentUser(activeMatched);
 }
 
 export function approveKYC(userId: string): User {
@@ -1896,16 +1633,15 @@ export function deleteUserAccount(userId: string): void {
 
   dispatchDbChange();
 
-  setDoc(doc(firestore, 'deleted_users', userId), {
+  const delMarker = {
     id: userId,
     deletedAt: new Date().toISOString()
-  }).catch(() => {});
-  deleteDoc(doc(firestore, 'users', userId)).catch(err =>
-    console.warn('Firestore delete user note:', err)
-  );
-  deleteDoc(doc(firestore, 'wallets', userId)).catch(() => {});
+  };
+  void pushDocToServer('deleted_users', userId, delMarker, true);
+  void deleteDocOnServer('users', userId);
+  void deleteDocOnServer('wallets', userId);
   removedListingIds.forEach(listingId => {
-    deleteDoc(doc(firestore, 'resale_listings', listingId)).catch(() => {});
+    void deleteDocOnServer('resale_listings', listingId);
   });
 }
 
@@ -3755,7 +3491,7 @@ export function createNotification(
   title: string,
   message: string,
   type: 'venda' | 'compra' | 'negociacao' | 'sistema',
-  linkType?: 'produto' | 'negociacao' | 'carteira' | 'admin',
+  linkType?: 'produto' | 'negociacao' | 'carteira' | 'admin' | 'assistente',
   linkId?: string
 ): Notification {
   const newNotif: Notification = {
@@ -3849,6 +3585,233 @@ export function updateOrderStatus(orderId: string, status: OrderStatus): any {
   dispatchDbChange();
   writeDocToFirestore('orders', orderId, updated, true).catch(() => {});
   return updated;
+}
+
+// ==========================================
+// ASSISTENTE JENIFFER (ATENDIMENTO INTELIGENTE)
+// ==========================================
+export function getAllAssistantConversations(): AssistantConversation[] {
+  return [...memoryAssistantConversations].sort((a, b) => {
+    const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    return tb - ta;
+  });
+}
+
+export function getAssistantConversations(userId?: string): AssistantConversation[] {
+  const all = getAllAssistantConversations();
+  if (!userId) return all;
+  return all.filter(c => c && c.userId === userId);
+}
+
+export function createAssistantConversation(user: User, title = 'Novo Atendimento'): AssistantConversation {
+  const nowIso = new Date().toISOString();
+  const welcomeMsg: AssistantMessage = {
+    id: `jmsg_welcome_${Date.now()}`,
+    conversationId: '',
+    sender: 'jeniffer',
+    senderName: 'Assistente Jeniffer',
+    text: `Olá ${user.name?.split(' ')[0] || 'Cliente'}! Sou a Assistente Jeniffer, a tua gerente virtual na BABA SHOPPING. Posso explicar como funciona a compra e revenda, consultar o teu saldo ou estado de depósitos/saques/BI, ou encaminhar qualquer questão para o Administrador. Em que posso ajudar hoje?`,
+    timestamp: nowIso
+  };
+  const convId = `chat_jen_${user.id.slice(-6)}_${Date.now()}`;
+  welcomeMsg.conversationId = convId;
+
+  const conv: AssistantConversation = {
+    id: convId,
+    userId: user.id,
+    userName: user.name || 'Cliente BABA',
+    userPhone: user.phone || '',
+    userProvince: user.province || '',
+    title,
+    status: 'ativo',
+    messages: [welcomeMsg],
+    lastMessagePreview: welcomeMsg.text.slice(0, 90),
+    unreadByAdmin: false,
+    unreadByUser: false,
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+
+  memoryAssistantConversations = [conv, ...memoryAssistantConversations];
+  backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+  dispatchDbChange();
+  writeDocToFirestore('assistant_conversations', convId, conv, false).catch(() => {});
+  return conv;
+}
+
+export async function sendJenifferChatMessage(
+  conversationId: string,
+  userId: string,
+  message: string
+): Promise<{
+  ok: boolean;
+  conversation?: AssistantConversation;
+  reply?: AssistantMessage;
+  error?: string;
+  code?: string;
+}> {
+  const res = await fetch('/api/assistant/jeniffer/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify({ conversationId, userId, message })
+  });
+  const json = await res.json().catch(() => ({
+    ok: false,
+    error: 'Falha ao comunicar com o servidor da Assistente Jeniffer.'
+  }));
+
+  if (json?.conversation) {
+    const conv = json.conversation as AssistantConversation;
+    memoryAssistantConversations = [
+      conv,
+      ...memoryAssistantConversations.filter(c => c && c.id !== conv.id)
+    ];
+    backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+    dispatchDbChange();
+  }
+
+  if (!res.ok || !json?.ok) {
+    return {
+      ok: false,
+      conversation: json?.conversation,
+      error: json?.error || 'Não foi possível obter resposta da Assistente Jeniffer.',
+      code: json?.code
+    };
+  }
+
+  return {
+    ok: true,
+    conversation: json.conversation,
+    reply: json.replyMessage
+  };
+}
+
+export async function escalateAssistantConversation(
+  conversationId: string,
+  userId: string,
+  reason: string
+): Promise<{ ok: boolean; conversation?: AssistantConversation; error?: string }> {
+  const res = await fetch('/api/assistant/jeniffer/escalate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify({ conversationId, userId, reason })
+  });
+  const json = await res.json().catch(() => ({
+    ok: false,
+    error: 'Erro ao encaminhar atendimento para o Administrador.'
+  }));
+
+  if (json?.conversation) {
+    const conv = json.conversation as AssistantConversation;
+    memoryAssistantConversations = [
+      conv,
+      ...memoryAssistantConversations.filter(c => c && c.id !== conv.id)
+    ];
+    backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+    dispatchDbChange();
+  }
+
+  if (!res.ok || !json?.ok) {
+    return { ok: false, error: json?.error || 'Erro ao encaminhar para o Administrador.' };
+  }
+  return { ok: true, conversation: json.conversation };
+}
+
+export function adminReplyAssistantConversation(
+  conversationId: string,
+  adminUser: User,
+  text: string,
+  nextStatus?: AssistantConversation['status']
+): AssistantConversation {
+  const idx = memoryAssistantConversations.findIndex(c => c && c.id === conversationId);
+  if (idx === -1) throw new Error('Conversa de atendimento não encontrada.');
+  const cleanText = text.trim();
+  if (!cleanText) throw new Error('Escreve uma resposta antes de enviar.');
+
+  const existing = memoryAssistantConversations[idx];
+  const nowIso = new Date().toISOString();
+  const msg: AssistantMessage = {
+    id: `jmsg_adm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    conversationId,
+    sender: 'admin',
+    senderName: adminUser?.name || 'Administrador BABA',
+    text: cleanText,
+    timestamp: nowIso
+  };
+
+  const updated: AssistantConversation = {
+    ...existing,
+    status: nextStatus || (existing.status === 'aguardando_adm' ? 'ativo' : existing.status),
+    messages: [...(Array.isArray(existing.messages) ? existing.messages : []), msg],
+    lastMessagePreview: `Adm: ${cleanText.slice(0, 85)}`,
+    unreadByAdmin: false,
+    unreadByUser: true,
+    updatedAt: nowIso
+  };
+
+  memoryAssistantConversations = [
+    updated,
+    ...memoryAssistantConversations.filter(c => c && c.id !== conversationId)
+  ];
+  backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+  dispatchDbChange();
+  writeDocToFirestore('assistant_conversations', conversationId, updated, false).catch(() => {});
+
+  createNotification(
+    existing.userId,
+    'Resposta do Administrador no Atendimento Jeniffer',
+    cleanText.slice(0, 140),
+    'sistema',
+    'assistente',
+    conversationId
+  );
+
+  return updated;
+}
+
+export function adminUpdateAssistantStatus(
+  conversationId: string,
+  status: AssistantConversation['status']
+): AssistantConversation {
+  const idx = memoryAssistantConversations.findIndex(c => c && c.id === conversationId);
+  if (idx === -1) throw new Error('Conversa não encontrada.');
+  const nowIso = new Date().toISOString();
+  const updated: AssistantConversation = {
+    ...memoryAssistantConversations[idx],
+    status,
+    unreadByAdmin: false,
+    updatedAt: nowIso
+  };
+  memoryAssistantConversations = [
+    updated,
+    ...memoryAssistantConversations.filter(c => c && c.id !== conversationId)
+  ];
+  backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+  dispatchDbChange();
+  writeDocToFirestore('assistant_conversations', conversationId, updated, false).catch(() => {});
+  return updated;
+}
+
+export function markAssistantConversationRead(
+  conversationId: string,
+  viewer: 'user' | 'admin'
+): void {
+  const idx = memoryAssistantConversations.findIndex(c => c && c.id === conversationId);
+  if (idx === -1) return;
+  const existing = memoryAssistantConversations[idx];
+  const needsUpdate = viewer === 'admin' ? existing.unreadByAdmin : existing.unreadByUser;
+  if (!needsUpdate) return;
+  const updated: AssistantConversation = {
+    ...existing,
+    ...(viewer === 'admin' ? { unreadByAdmin: false } : { unreadByUser: false })
+  };
+  memoryAssistantConversations[idx] = updated;
+  backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+  dispatchDbChange();
+  writeDocToFirestore('assistant_conversations', conversationId, updated, true).catch(() => {});
 }
 
 export {

@@ -267,7 +267,7 @@ export interface Notification {
   message: string;
   type: 'venda' | 'compra' | 'negociacao' | 'sistema';
   read: boolean;
-  linkType?: 'produto' | 'negociacao' | 'carteira' | 'admin';
+  linkType?: 'produto' | 'negociacao' | 'carteira' | 'admin' | 'assistente';
   linkId?: string;
   createdAt: string;
 }
@@ -281,3 +281,33 @@ export interface CartItem {
   source: 'oficial';
   selectedColor?: string;
 }
+
+export interface AssistantMessage {
+  id: string;
+  conversationId: string;
+  sender: 'user' | 'jeniffer' | 'admin';
+  senderName: string;
+  text: string;
+  timestamp: string;
+  consultedTools?: string[];
+  escalated?: boolean;
+}
+
+export interface AssistantConversation {
+  id: string;
+  userId: string;
+  userName: string;
+  userPhone?: string;
+  userProvince?: string;
+  title: string;
+  status: 'ativo' | 'aguardando_adm' | 'resolvido';
+  escalationReason?: string;
+  escalatedAt?: string;
+  messages: AssistantMessage[];
+  lastMessagePreview?: string;
+  unreadByAdmin?: boolean;
+  unreadByUser?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
