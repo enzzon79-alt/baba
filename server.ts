@@ -147,9 +147,20 @@ async function startServer(): Promise<void> {
   });
 
   // Full state snapshot for initial load & Safari visibility re-sync
-  app.get('/api/sync/state', (_req: Request, res: Response) => {
+  app.get('/api/sync/state', (req: Request, res: Response) => {
+    const sinceRev = Number(req.query.sinceRevision);
+    if (Number.isFinite(sinceRev) && sinceRev > 0 && sinceRev === store.revision) {
+      res.json({
+        ok: true,
+        unchanged: true,
+        revision: store.revision,
+        updatedAt: store.updatedAt
+      });
+      return;
+    }
     res.json({
       ok: true,
+      unchanged: false,
       revision: store.revision,
       updatedAt: store.updatedAt,
       collections: store.collections

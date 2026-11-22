@@ -75,10 +75,32 @@ interface AdminPanelProps {
 
 type AdminTab = 'validacao_bi' | 'depositos' | 'saques' | 'users' | 'operacoes' | 'ajustes';
 
+const dateFormatterAO = (() => {
+  try {
+    return new Intl.DateTimeFormat('pt-AO', { dateStyle: 'short', timeStyle: 'short' });
+  } catch {
+    return null;
+  }
+})();
+
+function formatDateAO(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  if (dateFormatterAO) {
+    try {
+      return dateFormatterAO.format(d);
+    } catch {}
+  }
+  return d.toLocaleDateString();
+}
+
 export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('validacao_bi');
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [feedback, setFeedback] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Filters & search
   const [depositFilter, setDepositFilter] = useState<'pendente' | 'aprovado' | 'rejeitado' | 'todos'>('pendente');
@@ -87,6 +109,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
   const [userSearch, setUserSearch] = useState('');
   const [opsSubTab, setOpsSubTab] = useState<'pedidos' | 'revendas' | 'negociacoes'>('pedidos');
   const [settingsSubTab, setSettingsSubTab] = useState<'catalogo' | 'suporte'>('suporte');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogLimit, setCatalogLimit] = useState(30);
 
   // Modals & action dialogs
   const [biModalUser, setBiModalUser] = useState<User | null>(null);
@@ -121,25 +145,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
   };
 
   useEffect(() => {
-    syncUsersFromFirestore().then(() => setTick(t => t + 1)).catch(() => {});
+    let active = true;
+    setIsSyncing(true);
+    syncUsersFromFirestore()
+      .catch(() => {})
+      .finally(() => {
+        if (active) {
+          setIsSyncing(false);
+          setTick(t => t + 1);
+        }
+      });
     const onDb = () => setTick(t => t + 1);
     window.addEventListener(DB_STATE_EVENT, onDb);
-    return () => window.removeEventListener(DB_STATE_EVENT, onDb);
+    return () => {
+      active = false;
+      window.removeEventListener(DB_STATE_EVENT, onDb);
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
   }, []);
 
   const notify = (msg: string, type: 'success' | 'error' = 'success') => {
     setFeedback({ msg, type });
-    setTimeout(() => setFeedback(null), 4000);
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = setTimeout(() => setFeedback(null), 4000);
   };
 
-  const users = getUsers();
-  const deposits = getDeposits();
-  const withdrawals = getWithdrawals();
-  const orders = getOrders();
-  const listings = getAllResaleListings();
-  const negotiations = getNegotiations(currentUser.id);
-  const products = getProducts();
-  const conversations = getAllAssistantConversations();
+  const users = useMemo(() => getUsers(), [tick]);
+  const deposits = useMemo(() => getDeposits(), [tick]);
+  const withdrawals = useMemo(() => getWithdrawals(), [tick]);
+  const orders = useMemo(() => getOrders(), [tick]);
+  const listings = useMemo(() => getAllResaleListings(), [tick]);
+  const negotiations = useMemo(() => getNegotiations(currentUser.id), [tick, currentUser.id]);
+  const products = useMemo(() => getProducts(), [tick]);
+  const conversations = useMemo(() => getAllAssistantConversations(), [tick]);
 
   const nonAdminUsers = useMemo(
     () =>
@@ -173,6 +211,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
   );
 
   const pendingOpsCount = pendingOrders.length + pendingListings.length + pendingNegs.length;
+
+  const filteredCatalogProducts = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter(
+      p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.brand || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q)
+    );
+  }, [products, catalogSearch]);
 
   const openRejectPrompt = (
     title: string,
@@ -314,27 +363,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
 
   return (
     <div className="w-full max-w-5xl mx-auto space-y-5 pb-16">
-      {/* Feedback Toast */}
+      {/* Feedback Toast (fixo no topo para visibilidade imediata no iPhone) */}
       {feedback && (
         <div
-          className={`p-3.5 rounded-2xl border text-xs font-bold flex items-center justify-between gap-2 shadow-xl animate-fadeIn ${
+          className={`fixed top-3 left-3 right-3 sm:left-auto sm:top-5 sm:right-6 sm:max-w-md z-[120] p-3.5 rounded-2xl border text-xs font-bold flex items-center justify-between gap-2 shadow-xl ${
             feedback.type === 'error'
-              ? 'bg-red-950/90 border-red-500/60 text-red-200'
-              : 'bg-emerald-950/90 border-emerald-500/60 text-emerald-200'
+              ? 'bg-red-950 border-red-500 text-red-100'
+              : 'bg-emerald-950 border-emerald-500 text-emerald-100'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {feedback.type === 'error' ? (
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
             ) : (
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             )}
-            <span>{feedback.msg}</span>
+            <span className="break-words">{feedback.msg}</span>
           </div>
           <button
             type="button"
             onClick={() => setFeedback(null)}
-            className="text-slate-300 hover:text-white cursor-pointer"
+            className="text-slate-300 hover:text-white cursor-pointer p-1 shrink-0"
           >
             ✕
           </button>
@@ -344,7 +393,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {/* ============================================================ */}
       {/* CARD PRINCIPAL DO DESIGN: MIDNIGHT NAVY & ROYAL BLUE DASHBOARD */}
       {/* ============================================================ */}
-      <div className="bg-[#0A1026] border-2 border-[#0EA5E9]/70 rounded-3xl p-5 sm:p-7 shadow-[0_24px_60px_rgba(8,14,38,0.55)] space-y-5 text-white">
+      <div className="bg-[#0A1026] border-2 border-[#0EA5E9]/70 rounded-3xl p-5 sm:p-7 shadow-xl space-y-5 text-white">
         {/* Header Row */}
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#2563EB] flex items-center justify-center shadow-lg shadow-blue-600/35 shrink-0 border border-blue-400/40">
@@ -356,7 +405,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                 Controlo Total
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-500/45 text-emerald-400 text-[10px] sm:text-[11px] font-black uppercase tracking-wider">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span>Tempo Real Ativo</span>
               </span>
             </div>
@@ -581,18 +630,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
               </div>
               <button
                 type="button"
+                disabled={isSyncing}
                 onClick={() => {
+                  setIsSyncing(true);
                   syncUsersFromFirestore()
                     .then(() => {
                       refresh();
                       notify('Lista de contas em análise atualizada.');
                     })
-                    .catch(() => refresh());
+                    .catch(() => {
+                      refresh();
+                      notify('Não foi possível sincronizar agora.', 'error');
+                    })
+                    .finally(() => setIsSyncing(false));
                 }}
-                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1.5 cursor-pointer self-start shrink-0"
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-xs font-bold text-slate-200 flex items-center gap-1.5 cursor-pointer self-start shrink-0"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-[#38BDF8]" />
-                <span>Atualizar Contas</span>
+                <RefreshCw className={`w-3.5 h-3.5 text-[#38BDF8] ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'A atualizar...' : 'Atualizar Contas'}</span>
               </button>
             </div>
 
@@ -679,20 +734,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                               <span>Ampliar</span>
                             </button>
                           </div>
-                          <div
+                          <button
+                            type="button"
                             onClick={() => setBiModalUser(u)}
-                            className="aspect-[16/10] rounded-lg bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center cursor-pointer hover:border-[#38BDF8]/60 transition-colors"
+                            className="w-full aspect-[16/10] rounded-lg bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center cursor-pointer hover:border-[#38BDF8]/60 transition-colors"
                           >
                             {u.idCardFront ? (
                               <img
                                 src={u.idCardFront}
                                 alt={`Frente do BI de ${u.name}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-contain"
                               />
                             ) : (
                               <span className="text-xs text-slate-500">Sem foto frontal</span>
                             )}
-                          </div>
+                          </button>
                         </div>
 
                         <div className="rounded-xl bg-slate-950/70 border border-slate-800 p-2.5 space-y-2">
@@ -707,26 +765,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                               <span>Ampliar</span>
                             </button>
                           </div>
-                          <div
+                          <button
+                            type="button"
                             onClick={() => setBiModalUser(u)}
-                            className="aspect-[16/10] rounded-lg bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center cursor-pointer hover:border-[#38BDF8]/60 transition-colors"
+                            className="w-full aspect-[16/10] rounded-lg bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center cursor-pointer hover:border-[#38BDF8]/60 transition-colors"
                           >
                             {u.idCardBack ? (
                               <img
                                 src={u.idCardBack}
                                 alt={`Verso do BI de ${u.name}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-contain"
                               />
                             ) : (
                               <span className="text-xs text-slate-500">Sem foto traseira</span>
                             )}
-                          </div>
+                          </button>
                         </div>
                       </div>
 
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-800">
                         <span className="text-[11px] text-slate-500">
-                          Registado em: {new Date(u.createdAt).toLocaleString('pt-AO')}
+                          Registado em: {formatDateAO(u.createdAt)}
                         </span>
                         <div className="flex flex-wrap items-center gap-2">
                           <button
@@ -736,9 +797,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                 `Recusar BI de ${u.name}`,
                                 'Motivo da recusa do Bilhete de Identidade...',
                                 reason => {
-                                  rejectKYC(u.id, reason);
-                                  notify(`Bilhete de ${u.name} recusado.`, 'error');
-                                  refresh();
+                                  try {
+                                    rejectKYC(u.id, reason);
+                                    notify(`Bilhete de ${u.name} recusado.`, 'error');
+                                    refresh();
+                                  } catch (err: any) {
+                                    notify(err?.message || 'Erro ao recusar BI.', 'error');
+                                  }
                                 }
                               )
                             }
@@ -750,9 +815,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <button
                             type="button"
                             onClick={() => {
-                              approveKYC(u.id);
-                              notify(`Conta de ${u.name} validada e ativada com sucesso!`);
-                              refresh();
+                              try {
+                                approveKYC(u.id);
+                                notify(`Conta de ${u.name} validada e ativada com sucesso!`);
+                                refresh();
+                              } catch (err: any) {
+                                notify(err?.message || 'Erro ao validar conta.', 'error');
+                              }
                             }}
                             className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
                           >
@@ -872,7 +941,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <span className="font-mono text-slate-200">{d.reference}</span>
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {new Date(d.createdAt).toLocaleString('pt-AO')}
+                        {formatDateAO(d.createdAt)}
                       </div>
                       {d.rejectionReason && (
                         <div className="text-xs text-red-300">Motivo: {d.rejectionReason}</div>
@@ -903,9 +972,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <button
                             type="button"
                             onClick={() => {
-                              approveDeposit(d.id);
-                              notify(`Depósito de ${formatKz(d.amount)} aprovado!`);
-                              refresh();
+                              try {
+                                approveDeposit(d.id);
+                                notify(`Depósito de ${formatKz(d.amount)} aprovado!`);
+                                refresh();
+                              } catch (err: any) {
+                                notify(err?.message || 'Erro ao aprovar depósito.', 'error');
+                              }
                             }}
                             className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
                           >
@@ -918,9 +991,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                 `Recusar depósito de ${d.userName}`,
                                 'Indica o motivo da recusa...',
                                 reason => {
-                                  rejectDeposit(d.id, reason);
-                                  notify('Depósito recusado.');
-                                  refresh();
+                                  try {
+                                    rejectDeposit(d.id, reason);
+                                    notify('Depósito recusado.');
+                                    refresh();
+                                  } catch (err: any) {
+                                    notify(err?.message || 'Erro ao recusar depósito.', 'error');
+                                  }
                                 }
                               )
                             }
@@ -1014,7 +1091,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         </button>
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {new Date(w.createdAt).toLocaleString('pt-AO')}
+                        {formatDateAO(w.createdAt)}
                       </div>
                       {w.rejectionReason && (
                         <div className="text-xs text-red-300">Motivo: {w.rejectionReason}</div>
@@ -1049,9 +1126,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                 `Recusar saque de ${w.userName}`,
                                 'Motivo da recusa...',
                                 reason => {
-                                  processWithdrawal(w.id, 'rejeitado', reason);
-                                  notify('Saque recusado.');
-                                  refresh();
+                                  try {
+                                    processWithdrawal(w.id, 'rejeitado', reason);
+                                    notify('Saque recusado.');
+                                    refresh();
+                                  } catch (err: any) {
+                                    notify(err?.message || 'Erro ao recusar saque.', 'error');
+                                  }
                                 }
                               )
                             }
@@ -1189,9 +1270,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                             <button
                               type="button"
                               onClick={() => {
-                                approveKYC(u.id);
-                                notify(`BI e conta de ${u.name} aprovados!`);
-                                refresh();
+                                try {
+                                  approveKYC(u.id);
+                                  notify(`BI e conta de ${u.name} aprovados!`);
+                                  refresh();
+                                } catch (err: any) {
+                                  notify(err?.message || 'Erro ao aprovar BI.', 'error');
+                                }
                               }}
                               className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
                             >
@@ -1204,9 +1289,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                   `Recusar BI de ${u.name}`,
                                   'Motivo da recusa do BI...',
                                   reason => {
-                                    rejectKYC(u.id, reason);
-                                    notify(`BI de ${u.name} recusado.`, 'error');
-                                    refresh();
+                                    try {
+                                      rejectKYC(u.id, reason);
+                                      notify(`BI de ${u.name} recusado.`, 'error');
+                                      refresh();
+                                    } catch (err: any) {
+                                      notify(err?.message || 'Erro ao recusar BI.', 'error');
+                                    }
                                   }
                                 )
                               }
@@ -1225,9 +1314,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                 `Suspender conta de ${u.name}`,
                                 'Motivo da suspensão...',
                                 reason => {
-                                  suspendUser(u.id, reason);
-                                  notify(`Conta de ${u.name} suspensa.`);
-                                  refresh();
+                                  try {
+                                    suspendUser(u.id, reason);
+                                    notify(`Conta de ${u.name} suspensa.`);
+                                    refresh();
+                                  } catch (err: any) {
+                                    notify(err?.message || 'Erro ao suspender conta.', 'error');
+                                  }
                                 }
                               )
                             }
@@ -1242,9 +1335,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <button
                             type="button"
                             onClick={() => {
-                              reactivateUser(u.id);
-                              notify(`Conta de ${u.name} reativada!`);
-                              refresh();
+                              try {
+                                reactivateUser(u.id);
+                                notify(`Conta de ${u.name} reativada!`);
+                                refresh();
+                              } catch (err: any) {
+                                notify(err?.message || 'Erro ao reativar conta.', 'error');
+                              }
                             }}
                             className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white cursor-pointer"
                           >
@@ -1255,9 +1352,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <button
                           type="button"
                           onClick={() => {
-                            deleteUserAccount(u.id);
-                            notify(`Conta de ${u.name} eliminada.`);
-                            refresh();
+                            try {
+                              deleteUserAccount(u.id);
+                              notify(`Conta de ${u.name} eliminada.`);
+                              refresh();
+                            } catch (err: any) {
+                              notify(err?.message || 'Erro ao eliminar conta.', 'error');
+                            }
                           }}
                           className="p-2 rounded-xl bg-red-950/80 hover:bg-red-800 border border-red-700/60 text-red-300 cursor-pointer"
                           title="Eliminar Conta"
@@ -1377,9 +1478,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                   `Recusar pedido de ${ord.buyerName}`,
                                   'Motivo da recusa...',
                                   reason => {
-                                    rejectOrder(ord.id, reason);
-                                    notify('Pedido recusado.');
-                                    refresh();
+                                    try {
+                                      rejectOrder(ord.id, reason);
+                                      notify('Pedido recusado.');
+                                      refresh();
+                                    } catch (err: any) {
+                                      notify(err?.message || 'Erro ao recusar pedido.', 'error');
+                                    }
                                   }
                                 )
                               }
@@ -1429,6 +1534,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <img
                           src={lst.imageUrl}
                           alt={lst.productName}
+                          loading="lazy"
+                          decoding="async"
                           className="w-12 h-12 rounded-xl object-cover shrink-0 border border-slate-700"
                         />
                         <div className="min-w-0">
@@ -1450,9 +1557,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <button
                             type="button"
                             onClick={() => {
-                              approveResaleListing(lst.id);
-                              notify('Anúncio aprovado no Mercado P2P!');
-                              refresh();
+                              try {
+                                approveResaleListing(lst.id);
+                                notify('Anúncio aprovado no Mercado P2P!');
+                                refresh();
+                              } catch (err: any) {
+                                notify(err?.message || 'Erro ao aprovar anúncio.', 'error');
+                              }
                             }}
                             className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
                           >
@@ -1465,9 +1576,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                 `Recusar anúncio "${lst.productName}"`,
                                 'Motivo da recusa...',
                                 reason => {
-                                  rejectResaleListing(lst.id, reason);
-                                  notify('Anúncio recusado.');
-                                  refresh();
+                                  try {
+                                    rejectResaleListing(lst.id, reason);
+                                    notify('Anúncio recusado.');
+                                    refresh();
+                                  } catch (err: any) {
+                                    notify(err?.message || 'Erro ao recusar anúncio.', 'error');
+                                  }
                                 }
                               )
                             }
@@ -1512,9 +1627,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <button
                             type="button"
                             onClick={() => {
-                              approveNegotiationProposal(neg.id);
-                              notify('Proposta aprovada!');
-                              refresh();
+                              try {
+                                approveNegotiationProposal(neg.id);
+                                notify('Proposta aprovada!');
+                                refresh();
+                              } catch (err: any) {
+                                notify(err?.message || 'Erro ao aprovar proposta.', 'error');
+                              }
                             }}
                             className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
                           >
@@ -1527,9 +1646,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                                 `Recusar proposta de ${neg.buyerName}`,
                                 'Motivo...',
                                 reason => {
-                                  rejectNegotiationProposal(neg.id, reason);
-                                  notify('Proposta recusada.');
-                                  refresh();
+                                  try {
+                                    rejectNegotiationProposal(neg.id, reason);
+                                    notify('Proposta recusada.');
+                                    refresh();
+                                  } catch (err: any) {
+                                    notify(err?.message || 'Erro ao recusar proposta.', 'error');
+                                  }
                                 }
                               )
                             }
@@ -1725,35 +1848,50 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
 
             {settingsSubTab === 'catalogo' && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                   <span className="text-xs font-bold text-slate-300">
-                    Produtos Oficiais do Catálogo ({products.length})
+                    Produtos Oficiais do Catálogo ({filteredCatalogProducts.length}/{products.length})
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsNewProduct(true);
-                      setEditingProduct({
-                        name: '',
-                        brand: 'BABA Official',
-                        category: 'eletronicos',
-                        officialPrice: 25000,
-                        suggestedResalePrice: 35000,
-                        stock: 50,
-                        status: 'disponivel',
-                        imageUrl: '',
-                        description: ''
-                      });
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Novo Produto</span>
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative flex-1 sm:w-52">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={catalogSearch}
+                        onChange={e => {
+                          setCatalogSearch(e.target.value);
+                          setCatalogLimit(30);
+                        }}
+                        placeholder="Filtrar catálogo..."
+                        className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-[#101830] border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#38BDF8]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsNewProduct(true);
+                        setEditingProduct({
+                          name: '',
+                          brand: 'BABA Official',
+                          category: 'eletronicos',
+                          officialPrice: 25000,
+                          suggestedResalePrice: 35000,
+                          stock: 50,
+                          status: 'disponivel',
+                          imageUrl: '',
+                          description: ''
+                        });
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Novo Produto</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[460px] overflow-y-auto pr-1">
-                  {products.map(prod => (
+                  {filteredCatalogProducts.slice(0, catalogLimit).map(prod => (
                     <div
                       key={prod.id}
                       className="p-3 rounded-2xl bg-[#101830] border border-slate-800 flex items-center justify-between gap-3"
@@ -1762,6 +1900,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <img
                           src={prod.imageUrl}
                           alt={prod.name}
+                          loading="lazy"
+                          decoding="async"
                           className="w-12 h-12 rounded-xl object-cover shrink-0 border border-slate-700"
                         />
                         <div className="min-w-0">
@@ -1785,6 +1925,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                     </div>
                   ))}
                 </div>
+
+                {filteredCatalogProducts.length > catalogLimit && (
+                  <button
+                    type="button"
+                    onClick={() => setCatalogLimit(l => l + 30)}
+                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-[#38BDF8] cursor-pointer"
+                  >
+                    Mostrar mais produtos ({filteredCatalogProducts.length - catalogLimit} restantes)
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1797,7 +1947,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {biModalUser && (
         <div
           onClick={() => setBiModalUser(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4"
         >
           <div
             onClick={e => e.stopPropagation()}
@@ -1827,6 +1977,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                     <img
                       src={biModalUser.idCardFront}
                       alt="Frente BI"
+                      decoding="async"
                       className="w-full h-full object-contain"
                     />
                   ) : (
@@ -1841,6 +1992,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                     <img
                       src={biModalUser.idCardBack}
                       alt="Verso BI"
+                      decoding="async"
                       className="w-full h-full object-contain"
                     />
                   ) : (
@@ -1855,10 +2007,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                 <button
                   type="button"
                   onClick={() => {
-                    approveKYC(biModalUser.id);
-                    notify(`BI e conta de ${biModalUser.name} aprovados!`);
-                    setBiModalUser(null);
-                    refresh();
+                    try {
+                      approveKYC(biModalUser.id);
+                      notify(`BI e conta de ${biModalUser.name} aprovados!`);
+                      setBiModalUser(null);
+                      refresh();
+                    } catch (err: any) {
+                      notify(err?.message || 'Erro ao aprovar BI.', 'error');
+                    }
                   }}
                   className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
                 >
@@ -1873,9 +2029,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                       `Recusar BI de ${target.name}`,
                       'Indica o motivo da recusa...',
                       reason => {
-                        rejectKYC(target.id, reason);
-                        notify(`BI de ${target.name} recusado.`, 'error');
-                        refresh();
+                        try {
+                          rejectKYC(target.id, reason);
+                          notify(`BI de ${target.name} recusado.`, 'error');
+                          refresh();
+                        } catch (err: any) {
+                          notify(err?.message || 'Erro ao recusar BI.', 'error');
+                        }
                       }
                     );
                   }}
@@ -1895,7 +2055,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {balanceModalUser && (
         <div
           onClick={() => setBalanceModalUser(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4"
         >
           <form
             onClick={e => e.stopPropagation()}
@@ -1991,7 +2151,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {receiptPreview && (
         <div
           onClick={() => setReceiptPreview(null)}
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
         >
           <div
             onClick={e => e.stopPropagation()}
@@ -2011,6 +2171,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
               <img
                 src={receiptPreview.src}
                 alt={receiptPreview.title}
+                decoding="async"
                 className="max-w-full max-h-[68vh] object-contain"
               />
             </div>
@@ -2024,7 +2185,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {rejectModal && (
         <div
           onClick={() => setRejectModal(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4"
         >
           <form
             onClick={e => e.stopPropagation()}
@@ -2070,7 +2231,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {editingProduct && (
         <div
           onClick={() => setEditingProduct(null)}
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 overflow-y-auto"
         >
           <form
             onClick={e => e.stopPropagation()}

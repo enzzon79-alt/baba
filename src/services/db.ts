@@ -164,7 +164,6 @@ function pushDocToServer(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     cache: 'no-store',
-    keepalive: true,
     body: JSON.stringify({ collection: colName, id: docId, data: payload, merge })
   })
     .then(() => undefined)
@@ -177,7 +176,6 @@ function deleteDocOnServer(colName: string, docId: string): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     cache: 'no-store',
-    keepalive: true,
     body: JSON.stringify({ collection: colName, id: docId })
   })
     .then(() => undefined)
@@ -210,12 +208,33 @@ function cleanForFirestore<T extends Record<string, any>>(obj: T): any {
   return res;
 }
 
+function stripHeavyMediaForStorage(val: any): any {
+  if (typeof val === 'string') {
+    if (val.startsWith('data:') && val.length > 16384) {
+      return '';
+    }
+    return val;
+  }
+  if (!val || typeof val !== 'object') return val;
+  if (Array.isArray(val)) return val.map(item => stripHeavyMediaForStorage(item));
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(val)) {
+    out[k] = stripHeavyMediaForStorage(v);
+  }
+  return out;
+}
+
 function backupToStorage<T>(key: string, val: T): void {
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(key, JSON.stringify(val));
     } catch {
-      // quota or Safari storage safe
+      // iOS Safari 2.5MB-5MB quota fallback: preserve records without heavy inline base64 images
+      try {
+        localStorage.setItem(key, JSON.stringify(stripHeavyMediaForStorage(val)));
+      } catch {
+        // Safari private mode / restricted iframe storage safe
+      }
     }
   }
 }
@@ -323,6 +342,7 @@ function mergeListById<T extends { id: string; createdAt?: string; updatedAt?: s
 }
 
 let serverSyncInFlight: Promise<boolean> | null = null;
+let lastSyncedRevision = 0;
 
 function applyServerDocUpdate(colName: string, id: string, docData: any): void {
   if (!docData || !id) return;
@@ -454,14 +474,18 @@ async function syncFromSharedServer(): Promise<boolean> {
   serverSyncInFlight = (async () => {
     try {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
-      const res = await fetch(`/api/sync/state?t=${Date.now()}`, {
+      const timer = controller ? setTimeout(() => controller.abort(), 7000) : null;
+      const sinceParam = lastSyncedRevision > 0 ? `&sinceRevision=${lastSyncedRevision}` : '';
+      const res = await fetch(`/api/sync/state?t=${Date.now()}${sinceParam}`, {
         cache: 'no-store',
         signal: controller?.signal
       });
       if (timer) clearTimeout(timer);
       if (!res.ok) return false;
       const json = await res.json();
+      if (json?.unchanged === true && serverSyncedCols.size > 0) {
+        return true;
+      }
       const cols = json?.collections;
       if (!cols || typeof cols !== 'object') return false;
 
@@ -653,6 +677,9 @@ async function syncFromSharedServer(): Promise<boolean> {
         backupToStorage(DB_KEYS.PRODUCTS, memoryProducts);
       }
 
+      if (Number(json?.revision) > 0) {
+        lastSyncedRevision = Number(json.revision);
+      }
       dispatchDbChange();
       return true;
     } catch {
