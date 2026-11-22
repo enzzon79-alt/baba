@@ -33,6 +33,7 @@ interface ClientInfoModalProps {
   onNavigateToWallet: () => void;
   onNavigateToProducts: () => void;
   onOpenAssistant?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
@@ -45,7 +46,8 @@ export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
   onOpenInvite,
   onNavigateToWallet,
   onNavigateToProducts,
-  onOpenAssistant
+  onOpenAssistant,
+  onOpenAdmin
 }) => {
   const [copiedId, setCopiedId] = useState(false);
 
@@ -267,6 +269,30 @@ export const ClientInfoModal: React.FC<ClientInfoModalProps> = ({
               </p>
             </button>
           </div>
+
+          {onOpenAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenAdmin();
+              }}
+              className="w-full p-3.5 rounded-xl bg-[#0A1026] hover:bg-[#112456] text-white border border-blue-500/50 text-left transition-colors cursor-pointer flex items-center justify-between gap-3 shadow-sm"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-[#2563EB] flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="font-black text-xs text-white">Painel do Administrador</div>
+                  <p className="text-[11px] text-blue-200/80 leading-tight">
+                    Controlo total: BI, depósitos, saques, pedidos, P2P e catálogo.
+                  </p>
+                </div>
+              </div>
+              <span className="text-[11px] font-black text-[#38BDF8] shrink-0">Abrir Painel</span>
+            </button>
+          )}
 
           {onOpenAssistant && (
             <button
