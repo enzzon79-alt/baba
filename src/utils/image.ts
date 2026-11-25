@@ -1,12 +1,28 @@
 /**
- * Compresses an uploaded image File into a compact JPEG data URL (< ~150KB)
- * so both front and back BI photos fit comfortably inside Firestore's 1MB document limit
- * and browser localStorage quota.
+ * Compresses an uploaded image File into a compact JPEG data URL (< ~120KB)
+ * so both front and back BI photos fit reliably across mobile networks,
+ * HTTP proxies, and browser localStorage quota.
  */
+async function decodeImageSource(file: File, rawDataUrl: string): Promise<HTMLImageElement | ImageBitmap> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(file);
+    } catch {
+      // Fallback to HTMLImageElement below
+    }
+  }
+  return await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Formato de imagem inválido ou não suportado pelo navegador.'));
+    image.src = rawDataUrl;
+  });
+}
+
 export async function compressImageToDataUrl(
   file: File,
-  maxWidth = 850,
-  quality = 0.72
+  maxWidth = 720,
+  quality = 0.62
 ): Promise<string> {
   const rawDataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -26,17 +42,18 @@ export async function compressImageToDataUrl(
     return rawDataUrl;
   }
 
+  let decoded: (HTMLImageElement | ImageBitmap) | null = null;
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('Formato de imagem inválido.'));
-      image.src = rawDataUrl;
-    });
+    decoded = await decodeImageSource(file, rawDataUrl);
+
+    const srcWidth =
+      'naturalWidth' in decoded ? decoded.naturalWidth || decoded.width : decoded.width;
+    const srcHeight =
+      'naturalHeight' in decoded ? decoded.naturalHeight || decoded.height : decoded.height;
 
     const render = (targetWidth: number, q: number): string => {
-      let width = img.naturalWidth || img.width || targetWidth;
-      let height = img.naturalHeight || img.height || Math.round(targetWidth * 0.65);
+      let width = srcWidth || targetWidth;
+      let height = srcHeight || Math.round(targetWidth * 0.65);
 
       if (width > targetWidth) {
         height = Math.round((height * targetWidth) / width);
@@ -51,22 +68,31 @@ export async function compressImageToDataUrl(
 
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(decoded as CanvasImageSource, 0, 0, canvas.width, canvas.height);
       return canvas.toDataURL('image/jpeg', q);
     };
 
     let compressed = render(maxWidth, quality);
-    // Second pass if still larger than ~220KB
-    if (compressed.length > 220 * 1024) {
-      compressed = render(680, 0.56);
+    if (compressed.length > 150 * 1024) {
+      compressed = render(560, 0.48);
     }
-    // Third pass if still larger than ~240KB so BI front+back or receipts never breach Firestore 1MB doc cap
-    if (compressed.length > 240 * 1024) {
-      compressed = render(540, 0.45);
+    if (compressed.length > 165 * 1024) {
+      compressed = render(440, 0.38);
     }
     return compressed;
   } catch {
-    return rawDataUrl;
+    if (rawDataUrl.length <= 280 * 1024) {
+      return rawDataUrl;
+    }
+    throw new Error(
+      'Não foi possível processar esta fotografia (formato/tamanho incompatível). Tira uma captura de ecrã (print) ou escolhe uma foto JPEG/PNG.'
+    );
+  } finally {
+    if (decoded && 'close' in decoded && typeof decoded.close === 'function') {
+      try {
+        decoded.close();
+      } catch {}
+    }
   }
 }
 
@@ -76,16 +102,16 @@ export async function readReceiptFileToDataUrl(file: File): Promise<string> {
     /\.(jpg|jpeg|png|webp|gif|bmp|heic|heif)$/i.test(file.name || '');
 
   if (isImage) {
-    const compressed = await compressImageToDataUrl(file, 900, 0.7);
-    if (compressed.length > 750 * 1024) {
+    const compressed = await compressImageToDataUrl(file, 760, 0.64);
+    if (compressed.length > 350 * 1024) {
       throw new Error('A imagem selecionada é demasiado pesada mesmo após compressão. Tenta outra fotografia.');
     }
     return compressed;
   }
 
-  // Non-image files (e.g. PDF) cannot be canvas-compressed; enforce ~680KB raw limit so base64 < 1MB Firestore cap
-  if (file.size > 680 * 1024) {
-    throw new Error('O ficheiro PDF do comprovativo excede 680KB. Por favor envia uma captura de ecrã (imagem) ou um PDF mais leve.');
+  // Non-image files (e.g. PDF) cannot be canvas-compressed; enforce ~450KB raw limit so base64 stays light
+  if (file.size > 450 * 1024) {
+    throw new Error('O ficheiro PDF do comprovativo excede 450KB. Por favor envia uma captura de ecrã (imagem) ou um PDF mais leve.');
   }
 
   return new Promise<string>((resolve, reject) => {

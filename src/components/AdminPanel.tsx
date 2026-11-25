@@ -32,30 +32,34 @@ import {
 } from '../types';
 import {
   getUsers,
-  syncUsersFromFirestore,
-  approveKYC,
-  rejectKYC,
+  syncAdminCollectionsFromFirestore,
+  subscribeAdminFirestoreRealtime,
+  signInAdminFirebaseAuth,
+  isAdminUserRecord,
+  toIsoTimestamp,
+  approveKYCAsync,
+  rejectKYCAsync,
   suspendUser,
   reactivateUser,
   deleteUserAccount,
   getWallet,
   adjustUserBalance,
   getDeposits,
-  approveDeposit,
-  rejectDeposit,
+  approveDepositAsync,
+  rejectDepositAsync,
   getWithdrawals,
-  processWithdrawal,
+  processWithdrawalAsync,
   getOrders,
-  approveOrder,
-  rejectOrder,
+  approveOrderAsync,
+  rejectOrderAsync,
   updateOrderStatus,
   getOrderStatusLabel,
   getAllResaleListings,
-  approveResaleListing,
-  rejectResaleListing,
+  approveResaleListingAsync,
+  rejectResaleListingAsync,
   getNegotiations,
-  approveNegotiationProposal,
-  rejectNegotiationProposal,
+  approveNegotiationProposalAsync,
+  rejectNegotiationProposalAsync,
   getProducts,
   updateProduct,
   createProduct,
@@ -66,6 +70,7 @@ import {
   formatKz,
   DB_STATE_EVENT
 } from '../services/db';
+import { auth } from '../services/firebase';
 import { copyTextToClipboard } from '../utils/image';
 
 interface AdminPanelProps {
@@ -83,7 +88,8 @@ const dateFormatterAO = (() => {
   }
 })();
 
-function formatDateAO(iso?: string): string {
+function formatDateAO(raw?: unknown): string {
+  const iso = toIsoTimestamp(raw);
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
@@ -96,9 +102,38 @@ function formatDateAO(iso?: string): string {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged }) => {
+  if (!isAdminUserRecord(currentUser)) {
+    return (
+      <div className="w-full max-w-xl mx-auto p-6 sm:p-8 rounded-3xl bg-[#0A1026] border-2 border-red-500/60 text-white text-center space-y-3 my-8 shadow-xl">
+        <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
+        <h2 className="text-lg font-black">Acesso Restrito ao Administrador</h2>
+        <p className="text-xs text-slate-300 leading-relaxed">
+          Apenas administradores autorizados podem visualizar pedidos pendentes, validar Bilhetes de Identidade ou aprovar e rejeitar operações.
+        </p>
+      </div>
+    );
+  }
+
+  return <AdminPanelInner currentUser={currentUser} onDataChanged={onDataChanged} />;
+};
+
+const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('validacao_bi');
   const [tick, setTick] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
+  const [rejectBusy, setRejectBusy] = useState(false);
+  const [realtimeKey, setRealtimeKey] = useState(0);
+  const [firestoreStatus, setFirestoreStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [firestoreError, setFirestoreError] = useState<{
+    collection?: string;
+    message: string;
+    code?: string;
+  } | null>(null);
+  const [fbAuthEmail, setFbAuthEmail] = useState(currentUser?.email || '');
+  const [fbAuthPassword, setFbAuthPassword] = useState('');
+  const [fbAuthBusy, setFbAuthBusy] = useState(false);
+  const [fbAuthError, setFbAuthError] = useState('');
   const [feedback, setFeedback] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const feedbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -118,7 +153,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
   const [rejectModal, setRejectModal] = useState<{
     title: string;
     placeholder: string;
-    onConfirm: (reason: string) => void;
+    onConfirm: (reason: string) => Promise<void> | void;
   } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
@@ -144,10 +179,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
     onDataChanged?.();
   };
 
+  const triggerManualSync = (showToast = true) => {
+    setIsSyncing(true);
+    syncAdminCollectionsFromFirestore()
+      .then(result => {
+        refresh();
+        const errs = result?.firestoreErrors || [];
+        if (errs.length > 0) {
+          setFirestoreStatus('error');
+          setFirestoreError(errs[0]);
+          if (showToast) {
+            notify(errs[0].message, 'error');
+          }
+        } else {
+          setFirestoreStatus('live');
+          setFirestoreError(null);
+          if (showToast) {
+            notify('Dados sincronizados com o Cloud Firestore em tempo real.');
+          }
+        }
+      })
+      .catch((err: any) => {
+        refresh();
+        if (showToast) {
+          notify(err?.message || 'Não foi possível sincronizar agora.', 'error');
+        }
+      })
+      .finally(() => setIsSyncing(false));
+  };
+
+  const handleFirebaseAdminSignIn = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setFbAuthError('');
+    setFbAuthBusy(true);
+    try {
+      await signInAdminFirebaseAuth(fbAuthEmail, fbAuthPassword);
+      setFbAuthPassword('');
+      setFirestoreError(null);
+      setFirestoreStatus('connecting');
+      setRealtimeKey(k => k + 1);
+      triggerManualSync(false);
+      notify('Sessão Firebase Admin autenticada! A sincronizar Cloud Firestore em tempo real.');
+    } catch (err: any) {
+      setFbAuthError(err?.message || 'Falha ao autenticar conta Admin no Firebase Auth.');
+    } finally {
+      setFbAuthBusy(false);
+    }
+  };
+
   useEffect(() => {
     let active = true;
     setIsSyncing(true);
-    syncUsersFromFirestore()
+    setFirestoreStatus('connecting');
+
+    const unsubFirestore = subscribeAdminFirestoreRealtime({
+      onCollectionSync: () => {
+        if (!active) return;
+        setFirestoreStatus('live');
+        setFirestoreError(null);
+        setTick(t => t + 1);
+      },
+      onError: (colName, message, code) => {
+        if (!active) return;
+        setFirestoreStatus('error');
+        setFirestoreError({ collection: colName, message, code });
+      }
+    });
+
+    syncAdminCollectionsFromFirestore()
+      .then(result => {
+        if (!active) return;
+        const errs = result?.firestoreErrors || [];
+        if (errs.length > 0) {
+          setFirestoreStatus('error');
+          setFirestoreError(errs[0]);
+        }
+      })
       .catch(() => {})
       .finally(() => {
         if (active) {
@@ -155,14 +262,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
           setTick(t => t + 1);
         }
       });
+
     const onDb = () => setTick(t => t + 1);
     window.addEventListener(DB_STATE_EVENT, onDb);
     return () => {
       active = false;
+      unsubFirestore();
       window.removeEventListener(DB_STATE_EVENT, onDb);
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
     };
-  }, []);
+  }, [realtimeKey]);
 
   const notify = (msg: string, type: 'success' | 'error' = 'success') => {
     setFeedback({ msg, type });
@@ -191,8 +300,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
     [users]
   );
 
+  const isPendingBIUser = (u: User) => {
+    const st = String(u.accountStatus || '').toLowerCase();
+    return !st || st === 'em_processamento' || st === 'pendente' || st === 'em_analise';
+  };
+
   const pendingUsers = useMemo(
-    () => nonAdminUsers.filter(u => u.accountStatus === 'em_processamento'),
+    () => nonAdminUsers.filter(isPendingBIUser),
     [nonAdminUsers]
   );
   const activeUsers = useMemo(
@@ -226,9 +340,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
   const openRejectPrompt = (
     title: string,
     placeholder: string,
-    onConfirm: (reason: string) => void
+    onConfirm: (reason: string) => Promise<void> | void
   ) => {
     setRejectReason('');
+    setRejectBusy(false);
     setRejectModal({ title, placeholder, onConfirm });
   };
 
@@ -326,7 +441,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
     const list =
       depositFilter === 'todos' ? deposits : deposits.filter(d => d.status === depositFilter);
     return [...list].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      (a, b) =>
+        new Date(toIsoTimestamp(b.createdAt) || 0).getTime() -
+        new Date(toIsoTimestamp(a.createdAt) || 0).getTime()
     );
   }, [deposits, depositFilter]);
 
@@ -336,13 +453,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
         ? withdrawals
         : withdrawals.filter(w => w.status === withdrawalFilter);
     return [...list].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      (a, b) =>
+        new Date(toIsoTimestamp(b.createdAt) || 0).getTime() -
+        new Date(toIsoTimestamp(a.createdAt) || 0).getTime()
     );
   }, [withdrawals, withdrawalFilter]);
 
   const filteredUsers = useMemo(() => {
     return nonAdminUsers.filter(u => {
-      if (userFilter !== 'todos' && u.accountStatus !== userFilter) return false;
+      if (userFilter === 'em_processamento') {
+        if (!isPendingBIUser(u)) return false;
+      } else if (userFilter !== 'todos' && u.accountStatus !== userFilter) {
+        return false;
+      }
       if (userSearch.trim()) {
         const q = userSearch.toLowerCase();
         return (
@@ -400,14 +523,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
             <ShieldCheck className="w-7 h-7 sm:w-8 sm:h-8 text-white stroke-[2.2]" />
           </div>
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="text-[11px] sm:text-xs font-black tracking-[0.18em] text-[#38BDF8] uppercase">
-                Controlo Total
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-950/90 border border-emerald-500/45 text-emerald-400 text-[10px] sm:text-[11px] font-black uppercase tracking-wider">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Tempo Real Ativo</span>
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-[11px] sm:text-xs font-black tracking-[0.18em] text-[#38BDF8] uppercase">
+                  Controlo Total
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full border text-[10px] sm:text-[11px] font-black uppercase tracking-wider ${
+                    firestoreStatus === 'live'
+                      ? 'bg-emerald-950/90 border-emerald-500/45 text-emerald-400'
+                      : firestoreStatus === 'error'
+                      ? 'bg-red-950/90 border-red-500/45 text-red-300'
+                      : 'bg-amber-950/90 border-amber-500/45 text-amber-300'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      firestoreStatus === 'live'
+                        ? 'bg-emerald-400'
+                        : firestoreStatus === 'error'
+                        ? 'bg-red-400'
+                        : 'bg-amber-400 animate-pulse'
+                    }`}
+                  />
+                  <span>
+                    {firestoreStatus === 'live'
+                      ? 'Tempo Real Ativo (Firestore)'
+                      : firestoreStatus === 'error'
+                      ? 'Permissão Firestore Pendente'
+                      : 'A Ligar Firestore...'}
+                  </span>
+                </span>
+              </div>
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={() => triggerManualSync(true)}
+                className="px-3 py-1.5 rounded-xl bg-[#112456] hover:bg-[#193375] border border-[#38BDF8]/40 text-[11px] font-bold text-[#38BDF8] flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'A sincronizar...' : 'Sincronizar'}</span>
+              </button>
             </div>
             <h1 className="font-serif text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">
               Painel do Administrador
@@ -417,6 +573,62 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
             </p>
           </div>
         </div>
+
+        {/* Cloud Firestore Auth / Permission Diagnostic Banner */}
+        {firestoreError && (
+          <div className="rounded-2xl bg-red-950/55 border border-red-500/50 p-4 space-y-3 text-xs">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-1 min-w-0">
+                <div className="font-black text-red-200 uppercase tracking-wide">
+                  Ligação Cloud Firestore ({firestoreError.collection || 'coleção'})
+                </div>
+                <p className="text-red-100/90 leading-relaxed break-words">
+                  {firestoreError.message}
+                </p>
+              </div>
+            </div>
+
+            {(!auth.currentUser || firestoreError.code === 'permission-denied') && (
+              <form
+                onSubmit={handleFirebaseAdminSignIn}
+                className="pt-2 border-t border-red-500/30 space-y-2"
+              >
+                <div className="text-[11px] font-bold text-slate-200">
+                  Inicia sessão com uma conta Administrador no Firebase Authentication para sincronizar e aprovar no Firestore:
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    type="email"
+                    required
+                    value={fbAuthEmail}
+                    onChange={e => setFbAuthEmail(e.target.value)}
+                    placeholder="Email Firebase do Admin"
+                    className="px-3 py-2 rounded-xl bg-[#0A1026] border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#38BDF8]"
+                  />
+                  <input
+                    type="password"
+                    required
+                    value={fbAuthPassword}
+                    onChange={e => setFbAuthPassword(e.target.value)}
+                    placeholder="Palavra-passe Firebase"
+                    className="px-3 py-2 rounded-xl bg-[#0A1026] border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#38BDF8]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={fbAuthBusy}
+                    className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-500 disabled:opacity-60 text-xs font-black text-white cursor-pointer"
+                  >
+                    {fbAuthBusy ? 'A autenticar...' : 'Autenticar Firebase'}
+                  </button>
+                </div>
+                {fbAuthError && (
+                  <p className="text-[11px] font-bold text-red-300">{fbAuthError}</p>
+                )}
+              </form>
+            )}
+          </div>
+        )}
 
         {/* Highlighted Pill Box: TOTAL DE USUÁRIOS */}
         <div className="inline-block min-w-[200px] sm:min-w-[240px] rounded-2xl bg-[#112456] border border-[#2563EB]/65 px-5 py-3.5 shadow-inner">
@@ -631,19 +843,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
               <button
                 type="button"
                 disabled={isSyncing}
-                onClick={() => {
-                  setIsSyncing(true);
-                  syncUsersFromFirestore()
-                    .then(() => {
-                      refresh();
-                      notify('Lista de contas em análise atualizada.');
-                    })
-                    .catch(() => {
-                      refresh();
-                      notify('Não foi possível sincronizar agora.', 'error');
-                    })
-                    .finally(() => setIsSyncing(false));
-                }}
+                onClick={() => triggerManualSync(true)}
                 className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-xs font-bold text-slate-200 flex items-center gap-1.5 cursor-pointer self-start shrink-0"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-[#38BDF8] ${isSyncing ? 'animate-spin' : ''}`} />
@@ -743,7 +943,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                               <img
                                 src={u.idCardFront}
                                 alt={`Frente do BI de ${u.name}`}
-                                loading="lazy"
                                 decoding="async"
                                 className="w-full h-full object-contain"
                               />
@@ -774,7 +973,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                               <img
                                 src={u.idCardBack}
                                 alt={`Verso do BI de ${u.name}`}
-                                loading="lazy"
                                 decoding="async"
                                 className="w-full h-full object-contain"
                               />
@@ -792,41 +990,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <div className="flex flex-wrap items-center gap-2">
                           <button
                             type="button"
+                            disabled={busyActionId === u.id}
                             onClick={() =>
                               openRejectPrompt(
                                 `Recusar BI de ${u.name}`,
                                 'Motivo da recusa do Bilhete de Identidade...',
-                                reason => {
+                                async reason => {
+                                  setBusyActionId(u.id);
                                   try {
-                                    rejectKYC(u.id, reason);
+                                    await rejectKYCAsync(u.id, reason);
                                     notify(`Bilhete de ${u.name} recusado.`, 'error');
                                     refresh();
                                   } catch (err: any) {
                                     notify(err?.message || 'Erro ao recusar BI.', 'error');
+                                  } finally {
+                                    setBusyActionId(null);
                                   }
                                 }
                               )
                             }
-                            className="px-4 py-2 rounded-xl bg-red-600/85 hover:bg-red-600 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"
+                            className="px-4 py-2 rounded-xl bg-red-600/85 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"
                           >
                             <XCircle className="w-4 h-4" />
                             <span>Recusar Bilhete</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
+                            disabled={busyActionId === u.id}
+                            onClick={async () => {
+                              setBusyActionId(u.id);
                               try {
-                                approveKYC(u.id);
+                                await approveKYCAsync(u.id);
                                 notify(`Conta de ${u.name} validada e ativada com sucesso!`);
                                 refresh();
                               } catch (err: any) {
                                 notify(err?.message || 'Erro ao validar conta.', 'error');
+                              } finally {
+                                setBusyActionId(null);
                               }
                             }}
-                            className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
+                            className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
                           >
                             <CheckCircle2 className="w-4 h-4" />
-                            <span>Aprovar &amp; Validar Conta</span>
+                            <span>{busyActionId === u.id ? 'A validar...' : 'Aprovar & Validar Conta'}</span>
                           </button>
                         </div>
                       </div>
@@ -911,8 +1117,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
             </div>
 
             {filteredDeposits.length === 0 ? (
-              <div className="p-8 rounded-2xl bg-[#101830] border border-slate-800 text-center text-xs text-slate-400">
-                Nenhum pedido de depósito neste filtro.
+              <div className="p-8 rounded-2xl bg-[#101830] border border-slate-800 text-center text-xs text-slate-400 space-y-3">
+                <div>Nenhum pedido de depósito neste filtro.</div>
+                {depositFilter !== 'todos' && deposits.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setDepositFilter('todos')}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[#38BDF8] font-bold cursor-pointer"
+                  >
+                    Ver Todos ({deposits.length})
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -971,37 +1186,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <>
                           <button
                             type="button"
-                            onClick={() => {
+                            disabled={busyActionId === d.id}
+                            onClick={async () => {
+                              setBusyActionId(d.id);
                               try {
-                                approveDeposit(d.id);
+                                await approveDepositAsync(d.id);
                                 notify(`Depósito de ${formatKz(d.amount)} aprovado!`);
                                 refresh();
                               } catch (err: any) {
                                 notify(err?.message || 'Erro ao aprovar depósito.', 'error');
+                              } finally {
+                                setBusyActionId(null);
                               }
                             }}
-                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                           >
-                            Aprovar
+                            {busyActionId === d.id ? 'A guardar...' : 'Aprovar'}
                           </button>
                           <button
                             type="button"
+                            disabled={busyActionId === d.id}
                             onClick={() =>
                               openRejectPrompt(
                                 `Recusar depósito de ${d.userName}`,
                                 'Indica o motivo da recusa...',
-                                reason => {
+                                async reason => {
+                                  setBusyActionId(d.id);
                                   try {
-                                    rejectDeposit(d.id, reason);
+                                    await rejectDepositAsync(d.id, reason);
                                     notify('Depósito recusado.');
                                     refresh();
                                   } catch (err: any) {
                                     notify(err?.message || 'Erro ao recusar depósito.', 'error');
+                                  } finally {
+                                    setBusyActionId(null);
                                   }
                                 }
                               )
                             }
-                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-xs font-bold text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white cursor-pointer"
                           >
                             Recusar
                           </button>
@@ -1047,8 +1270,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
             </div>
 
             {filteredWithdrawals.length === 0 ? (
-              <div className="p-8 rounded-2xl bg-[#101830] border border-slate-800 text-center text-xs text-slate-400">
-                Nenhum pedido de saque neste filtro.
+              <div className="p-8 rounded-2xl bg-[#101830] border border-slate-800 text-center text-xs text-slate-400 space-y-3">
+                <div>Nenhum pedido de saque neste filtro.</div>
+                {withdrawalFilter !== 'todos' && withdrawals.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setWithdrawalFilter('todos')}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-[#38BDF8] font-bold cursor-pointer"
+                  >
+                    Ver Todos ({withdrawals.length})
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -1106,37 +1338,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <>
                           <button
                             type="button"
-                            onClick={() => {
+                            disabled={busyActionId === w.id}
+                            onClick={async () => {
+                              setBusyActionId(w.id);
                               try {
-                                processWithdrawal(w.id, 'processado');
+                                await processWithdrawalAsync(w.id, 'processado');
                                 notify(`Saque de ${formatKz(w.amount)} aprovado!`);
                                 refresh();
                               } catch (err: any) {
                                 notify(err?.message || 'Erro ao aprovar saque.', 'error');
+                              } finally {
+                                setBusyActionId(null);
                               }
                             }}
-                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                           >
-                            Aprovar
+                            {busyActionId === w.id ? 'A guardar...' : 'Aprovar'}
                           </button>
                           <button
                             type="button"
+                            disabled={busyActionId === w.id}
                             onClick={() =>
                               openRejectPrompt(
                                 `Recusar saque de ${w.userName}`,
                                 'Motivo da recusa...',
-                                reason => {
+                                async reason => {
+                                  setBusyActionId(w.id);
                                   try {
-                                    processWithdrawal(w.id, 'rejeitado', reason);
+                                    await processWithdrawalAsync(w.id, 'rejeitado', reason);
                                     notify('Saque recusado.');
                                     refresh();
                                   } catch (err: any) {
                                     notify(err?.message || 'Erro ao recusar saque.', 'error');
+                                  } finally {
+                                    setBusyActionId(null);
                                   }
                                 }
                               )
                             }
-                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-xs font-bold text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white cursor-pointer"
                           >
                             Recusar
                           </button>
@@ -1265,41 +1505,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <span>Ajustar Saldo</span>
                         </button>
 
-                        {u.accountStatus === 'em_processamento' && (
+                        {isPendingBIUser(u) && (
                           <>
                             <button
                               type="button"
-                              onClick={() => {
+                              disabled={busyActionId === u.id}
+                              onClick={async () => {
+                                setBusyActionId(u.id);
                                 try {
-                                  approveKYC(u.id);
+                                  await approveKYCAsync(u.id);
                                   notify(`BI e conta de ${u.name} aprovados!`);
                                   refresh();
                                 } catch (err: any) {
                                   notify(err?.message || 'Erro ao aprovar BI.', 'error');
+                                } finally {
+                                  setBusyActionId(null);
                                 }
                               }}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                             >
-                              Aprovar BI
+                              {busyActionId === u.id ? 'A aprovar...' : 'Aprovar BI'}
                             </button>
                             <button
                               type="button"
+                              disabled={busyActionId === u.id}
                               onClick={() =>
                                 openRejectPrompt(
                                   `Recusar BI de ${u.name}`,
                                   'Motivo da recusa do BI...',
-                                  reason => {
+                                  async reason => {
+                                    setBusyActionId(u.id);
                                     try {
-                                      rejectKYC(u.id, reason);
+                                      await rejectKYCAsync(u.id, reason);
                                       notify(`BI de ${u.name} recusado.`, 'error');
                                       refresh();
                                     } catch (err: any) {
                                       notify(err?.message || 'Erro ao recusar BI.', 'error');
+                                    } finally {
+                                      setBusyActionId(null);
                                     }
                                   }
                                 )
                               }
-                              className="px-3 py-1.5 rounded-xl bg-red-600/80 hover:bg-red-600 text-xs font-bold text-white cursor-pointer"
+                              className="px-3 py-1.5 rounded-xl bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white cursor-pointer"
                             >
                               Recusar BI
                             </button>
@@ -1458,37 +1706,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                           <>
                             <button
                               type="button"
-                              onClick={() => {
+                              disabled={busyActionId === ord.id}
+                              onClick={async () => {
+                                setBusyActionId(ord.id);
                                 try {
-                                  approveOrder(ord.id);
+                                  await approveOrderAsync(ord.id);
                                   notify('Pedido aprovado e entregue ao cliente!');
                                   refresh();
                                 } catch (err: any) {
                                   notify(err?.message || 'Erro ao aprovar pedido.', 'error');
+                                } finally {
+                                  setBusyActionId(null);
                                 }
                               }}
-                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                             >
-                              Aprovar Pedido
+                              {busyActionId === ord.id ? 'A aprovar...' : 'Aprovar Pedido'}
                             </button>
                             <button
                               type="button"
+                              disabled={busyActionId === ord.id}
                               onClick={() =>
                                 openRejectPrompt(
                                   `Recusar pedido de ${ord.buyerName}`,
                                   'Motivo da recusa...',
-                                  reason => {
+                                  async reason => {
+                                    setBusyActionId(ord.id);
                                     try {
-                                      rejectOrder(ord.id, reason);
+                                      await rejectOrderAsync(ord.id, reason);
                                       notify('Pedido recusado.');
                                       refresh();
                                     } catch (err: any) {
                                       notify(err?.message || 'Erro ao recusar pedido.', 'error');
+                                    } finally {
+                                      setBusyActionId(null);
                                     }
                                   }
                                 )
                               }
-                              className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-xs font-bold text-white cursor-pointer"
+                              className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white cursor-pointer"
                             >
                               Recusar
                             </button>
@@ -1556,37 +1812,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <div className="flex items-center gap-2 shrink-0">
                           <button
                             type="button"
-                            onClick={() => {
+                            disabled={busyActionId === lst.id}
+                            onClick={async () => {
+                              setBusyActionId(lst.id);
                               try {
-                                approveResaleListing(lst.id);
+                                await approveResaleListingAsync(lst.id);
                                 notify('Anúncio aprovado no Mercado P2P!');
                                 refresh();
                               } catch (err: any) {
                                 notify(err?.message || 'Erro ao aprovar anúncio.', 'error');
+                              } finally {
+                                setBusyActionId(null);
                               }
                             }}
-                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                           >
-                            Aprovar
+                            {busyActionId === lst.id ? 'A aprovar...' : 'Aprovar'}
                           </button>
                           <button
                             type="button"
+                            disabled={busyActionId === lst.id}
                             onClick={() =>
                               openRejectPrompt(
                                 `Recusar anúncio "${lst.productName}"`,
                                 'Motivo da recusa...',
-                                reason => {
+                                async reason => {
+                                  setBusyActionId(lst.id);
                                   try {
-                                    rejectResaleListing(lst.id, reason);
+                                    await rejectResaleListingAsync(lst.id, reason);
                                     notify('Anúncio recusado.');
                                     refresh();
                                   } catch (err: any) {
                                     notify(err?.message || 'Erro ao recusar anúncio.', 'error');
+                                  } finally {
+                                    setBusyActionId(null);
                                   }
                                 }
                               )
                             }
-                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-xs font-bold text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white cursor-pointer"
                           >
                             Recusar
                           </button>
@@ -1626,37 +1890,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                         <div className="flex items-center gap-2 shrink-0">
                           <button
                             type="button"
-                            onClick={() => {
+                            disabled={busyActionId === neg.id}
+                            onClick={async () => {
+                              setBusyActionId(neg.id);
                               try {
-                                approveNegotiationProposal(neg.id);
+                                await approveNegotiationProposalAsync(neg.id);
                                 notify('Proposta aprovada!');
                                 refresh();
                               } catch (err: any) {
                                 notify(err?.message || 'Erro ao aprovar proposta.', 'error');
+                              } finally {
+                                setBusyActionId(null);
                               }
                             }}
-                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                           >
-                            Aprovar
+                            {busyActionId === neg.id ? 'A aprovar...' : 'Aprovar'}
                           </button>
                           <button
                             type="button"
+                            disabled={busyActionId === neg.id}
                             onClick={() =>
                               openRejectPrompt(
                                 `Recusar proposta de ${neg.buyerName}`,
                                 'Motivo...',
-                                reason => {
+                                async reason => {
+                                  setBusyActionId(neg.id);
                                   try {
-                                    rejectNegotiationProposal(neg.id, reason);
+                                    await rejectNegotiationProposalAsync(neg.id, reason);
                                     notify('Proposta recusada.');
                                     refresh();
                                   } catch (err: any) {
                                     notify(err?.message || 'Erro ao recusar proposta.', 'error');
+                                  } finally {
+                                    setBusyActionId(null);
                                   }
                                 }
                               )
                             }
-                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-xs font-bold text-white cursor-pointer"
+                            className="px-3.5 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-xs font-bold text-white cursor-pointer"
                           >
                             Recusar
                           </button>
@@ -2002,44 +2274,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
               </div>
             </div>
 
-            {biModalUser.accountStatus === 'em_processamento' && (
+            {isPendingBIUser(biModalUser) && (
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
+                  disabled={busyActionId === biModalUser.id}
+                  onClick={async () => {
+                    const target = biModalUser;
+                    setBusyActionId(target.id);
                     try {
-                      approveKYC(biModalUser.id);
-                      notify(`BI e conta de ${biModalUser.name} aprovados!`);
+                      await approveKYCAsync(target.id);
+                      notify(`BI e conta de ${target.name} aprovados!`);
                       setBiModalUser(null);
                       refresh();
                     } catch (err: any) {
                       notify(err?.message || 'Erro ao aprovar BI.', 'error');
+                    } finally {
+                      setBusyActionId(null);
                     }
                   }}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                 >
-                  Aprovar BI &amp; Ativar Conta
+                  {busyActionId === biModalUser.id ? 'A aprovar...' : 'Aprovar BI & Ativar Conta'}
                 </button>
                 <button
                   type="button"
+                  disabled={busyActionId === biModalUser.id}
                   onClick={() => {
                     const target = biModalUser;
                     setBiModalUser(null);
                     openRejectPrompt(
                       `Recusar BI de ${target.name}`,
                       'Indica o motivo da recusa...',
-                      reason => {
+                      async reason => {
+                        setBusyActionId(target.id);
                         try {
-                          rejectKYC(target.id, reason);
+                          await rejectKYCAsync(target.id, reason);
                           notify(`BI de ${target.name} recusado.`, 'error');
                           refresh();
                         } catch (err: any) {
                           notify(err?.message || 'Erro ao recusar BI.', 'error');
+                        } finally {
+                          setBusyActionId(null);
                         }
                       }
                     );
                   }}
-                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-black text-white cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-xs font-black text-white cursor-pointer"
                 >
                   Recusar BI
                 </button>
@@ -2167,13 +2448,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex items-center justify-center max-h-[70vh]">
-              <img
-                src={receiptPreview.src}
-                alt={receiptPreview.title}
-                decoding="async"
-                className="max-w-full max-h-[68vh] object-contain"
-              />
+            <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 flex flex-col items-center justify-center max-h-[72vh]">
+              {receiptPreview.src.startsWith('data:application/pdf') ? (
+                <div className="w-full flex flex-col items-center gap-3 p-3">
+                  <iframe
+                    src={receiptPreview.src}
+                    title={receiptPreview.title}
+                    className="w-full h-[55vh] rounded-xl bg-white"
+                  />
+                  <a
+                    href={receiptPreview.src}
+                    download="comprovativo-baba.pdf"
+                    className="px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-500 text-xs font-black text-white"
+                  >
+                    Descarregar Comprovativo PDF
+                  </a>
+                </div>
+              ) : (
+                <img
+                  src={receiptPreview.src}
+                  alt={receiptPreview.title}
+                  decoding="async"
+                  className="max-w-full max-h-[68vh] object-contain"
+                />
+              )}
             </div>
           </div>
         </div>
@@ -2184,16 +2482,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
       {/* ============================================================ */}
       {rejectModal && (
         <div
-          onClick={() => setRejectModal(null)}
+          onClick={() => !rejectBusy && setRejectModal(null)}
           className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4"
         >
           <form
             onClick={e => e.stopPropagation()}
-            onSubmit={e => {
+            onSubmit={async e => {
               e.preventDefault();
-              if (!rejectReason.trim()) return;
-              rejectModal.onConfirm(rejectReason.trim());
-              setRejectModal(null);
+              if (!rejectReason.trim() || rejectBusy) return;
+              setRejectBusy(true);
+              try {
+                await rejectModal.onConfirm(rejectReason.trim());
+                setRejectModal(null);
+              } finally {
+                setRejectBusy(false);
+              }
             }}
             className="bg-[#0A1026] border border-red-500/50 rounded-3xl max-w-md w-full p-5 space-y-4 text-white shadow-2xl"
           >
@@ -2203,22 +2506,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onDataChang
               onChange={e => setRejectReason(e.target.value)}
               rows={3}
               required
+              disabled={rejectBusy}
               placeholder={rejectModal.placeholder}
               className="w-full p-3 rounded-xl bg-[#101830] border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-red-400"
             />
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                disabled={rejectBusy}
                 onClick={() => setRejectModal(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black cursor-pointer"
+                disabled={rejectBusy}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black cursor-pointer disabled:opacity-50"
               >
-                Confirmar
+                {rejectBusy ? 'A processar...' : 'Confirmar'}
               </button>
             </div>
           </form>

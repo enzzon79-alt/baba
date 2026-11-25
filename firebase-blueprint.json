@@ -20,7 +20,7 @@
     },
     "User": {
       "title": "User",
-      "description": "Utilizador da plataforma BABA SHOPPING",
+      "description": "Utilizador da plataforma BABA SHOPPING e estado da validação de Bilhete (KYC)",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -28,13 +28,17 @@
         "email": { "type": "string" },
         "phone": { "type": "string" },
         "role": { "type": "string", "enum": ["client", "admin"] },
-        "accountStatus": { "type": "string", "enum": ["ativo", "em_processamento", "rejeitado"] },
+        "accountStatus": { "type": "string", "enum": ["ativo", "em_processamento", "rejeitado", "suspenso"] },
         "province": { "type": "string" },
         "city": { "type": "string" },
         "idNumber": { "type": "string" },
         "birthDate": { "type": "string" },
         "idCardFront": { "type": "string" },
         "idCardBack": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "suspensionReason": { "type": "string" },
+        "referralRewardPaid": { "type": "boolean" },
+        "verifiedAt": { "type": "string" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "name", "email", "role", "accountStatus"]
@@ -44,16 +48,17 @@
       "description": "Carteira digital de saldo e histórico de movimentos",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
         "userId": { "type": "string" },
         "availableBalance": { "type": "number" },
-        "frozenBalance": { "type": "number" },
-        "totalEarnings": { "type": "number" },
+        "pendingBalance": { "type": "number" },
+        "reservedBalance": { "type": "number" },
+        "totalDeposited": { "type": "number" },
         "totalSpent": { "type": "number" },
-        "transactions": { "type": "array" },
+        "totalEarned": { "type": "number" },
+        "totalWithdrawn": { "type": "number" },
         "updatedAt": { "type": "string" }
       },
-      "required": ["id", "userId", "availableBalance"]
+      "required": ["userId", "availableBalance"]
     },
     "ResaleListing": {
       "title": "ResaleListing",
@@ -64,7 +69,6 @@
         "userProductId": { "type": "string" },
         "sellerId": { "type": "string" },
         "sellerName": { "type": "string" },
-        "productId": { "type": "string" },
         "productName": { "type": "string" },
         "category": { "type": "string" },
         "originalPrice": { "type": "number" },
@@ -72,8 +76,10 @@
         "minAcceptablePrice": { "type": "number" },
         "customDescription": { "type": "string" },
         "allowNegotiation": { "type": "boolean" },
-        "status": { "type": "string", "enum": ["ativo", "negociando", "vendido", "cancelado"] },
+        "status": { "type": "string", "enum": ["pendente", "ativo", "vendido", "pausado", "rejeitado"] },
+        "rejectionReason": { "type": "string" },
         "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
         "imageUrl": { "type": "string" }
       },
       "required": ["id", "sellerId", "listingPrice", "status"]
@@ -84,20 +90,16 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "productId": { "type": "string" },
+        "currentOwnerId": { "type": "string" },
+        "originalProductId": { "type": "string" },
         "productName": { "type": "string" },
         "category": { "type": "string" },
-        "brand": { "type": "string" },
         "originalPrice": { "type": "number" },
-        "suggestedResalePrice": { "type": "number" },
-        "imageUrl": { "type": "string" },
-        "description": { "type": "string" },
+        "productImage": { "type": "string" },
         "purchaseDate": { "type": "string" },
-        "status": { "type": "string", "enum": ["disponivel", "a_venda", "vendido", "utilizado"] },
-        "activeListingId": { "type": "string" }
+        "status": { "type": "string", "enum": ["disponivel", "anunciado", "vendido"] }
       },
-      "required": ["id", "userId", "productId", "status"]
+      "required": ["id", "currentOwnerId", "originalProductId", "status"]
     },
     "Negotiation": {
       "title": "Negotiation",
@@ -111,10 +113,10 @@
         "sellerId": { "type": "string" },
         "sellerName": { "type": "string" },
         "productName": { "type": "string" },
-        "originalListingPrice": { "type": "number" },
+        "listedPrice": { "type": "number" },
         "currentProposedPrice": { "type": "number" },
-        "lastOfferBy": { "type": "string", "enum": ["comprador", "vendedor"] },
-        "status": { "type": "string", "enum": ["pendente_vendedor", "pendente_comprador", "aceite", "recusada", "concluida"] },
+        "lastOfferBy": { "type": "string", "enum": ["buyer", "seller"] },
+        "status": { "type": "string", "enum": ["aguardando_adm", "pendente", "contraproposta", "aceite", "recusada", "concluida", "cancelada"] },
         "messages": { "type": "array" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
@@ -127,7 +129,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "userId": { "type": "string" },
+        "recipientId": { "type": "string" },
         "title": { "type": "string" },
         "message": { "type": "string" },
         "type": { "type": "string" },
@@ -136,7 +138,7 @@
         "linkId": { "type": "string" },
         "createdAt": { "type": "string" }
       },
-      "required": ["id", "userId", "title", "message", "read"]
+      "required": ["id", "recipientId", "title", "message", "read"]
     },
     "Deposit": {
       "title": "Deposit",
@@ -146,15 +148,16 @@
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "userName": { "type": "string" },
-        "userPhone": { "type": "string" },
         "amount": { "type": "number" },
-        "method": { "type": "string" },
+        "paymentMethod": { "type": "string" },
         "reference": { "type": "string" },
         "receiptProof": { "type": "string" },
         "status": { "type": "string", "enum": ["pendente", "aprovado", "rejeitado"] },
-        "createdAt": { "type": "string" }
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": ["id", "userId", "amount", "status"]
+      "required": ["id", "userId", "userName", "amount", "paymentMethod", "reference", "status", "createdAt"]
     },
     "Withdrawal": {
       "title": "Withdrawal",
@@ -164,14 +167,62 @@
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "userName": { "type": "string" },
-        "userPhone": { "type": "string" },
         "amount": { "type": "number" },
-        "iban": { "type": "string" },
         "bankName": { "type": "string" },
-        "status": { "type": "string", "enum": ["pendente", "processado", "recusado"] },
+        "iban": { "type": "string" },
+        "accountHolder": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "processado", "rejeitado", "recusado"] },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "userName", "amount", "bankName", "iban", "accountHolder", "status", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Pedido de compra na plataforma",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paymentReference": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "buyerId", "totalAmount", "status", "createdAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Registo de transação financeira",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "type": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string" },
+        "reference": { "type": "string" },
         "createdAt": { "type": "string" }
       },
-      "required": ["id", "userId", "amount", "iban", "status"]
+      "required": ["id", "userId", "type", "amount", "status", "createdAt"]
+    },
+    "AssistantConversation": {
+      "title": "AssistantConversation",
+      "description": "Conversa de atendimento com Assistente Jeniffer e Administrador",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativo", "aguardando_adm", "resolvido"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -210,6 +261,18 @@
     "/withdrawals/{withdrawalId}": {
       "schema": { "$ref": "#/entities/Withdrawal" },
       "description": "Pedidos de levantamento para conta bancária"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Pedidos de compra registados"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Histórico de movimentos financeiros"
+    },
+    "/assistant_conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/AssistantConversation" },
+      "description": "Atendimento inteligente Assistente Jeniffer"
     }
   }
 }

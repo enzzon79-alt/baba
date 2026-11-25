@@ -81,22 +81,43 @@ function loadStore(): StoreData {
 const store: StoreData = loadStore();
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-function schedulePersist(): void {
+function flushPersistNow(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const tmp = `${STORE_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(store), 'utf8');
+    fs.renameSync(tmp, STORE_FILE);
+  } catch (err) {
+    console.warn('Store persist error:', err);
+  }
+}
+
+function schedulePersist(immediate = false): void {
+  if (immediate) {
+    flushPersistNow();
+    return;
+  }
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
-    saveTimer = null;
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      const tmp = `${STORE_FILE}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(store), 'utf8');
-      fs.renameSync(tmp, STORE_FILE);
-    } catch (err) {
-      console.warn('Store persist error:', err);
-    }
-  }, 50);
+    flushPersistNow();
+  }, 40);
 }
+
+const CRITICAL_PERSIST_COLLECTIONS = new Set([
+  'users',
+  'deleted_users',
+  'wallets',
+  'deposits',
+  'withdrawals',
+  'orders',
+  'transactions'
+]);
 
 const sseClients = new Set<Response>();
 
@@ -115,7 +136,8 @@ function upsertStoreDoc(
   collection: string,
   id: string,
   data: Record<string, any>,
-  merge = true
+  merge = true,
+  options?: { skipPersist?: boolean; skipBroadcast?: boolean }
 ): any {
   const colMap = store.collections[collection];
   if (!colMap) return null;
@@ -124,13 +146,17 @@ function upsertStoreDoc(
   colMap[id] = nextDoc;
   store.revision += 1;
   store.updatedAt = new Date().toISOString();
-  schedulePersist();
-  broadcastEvent('upsert', {
-    collection,
-    id,
-    doc: nextDoc,
-    revision: store.revision
-  });
+  if (!options?.skipPersist) {
+    schedulePersist(CRITICAL_PERSIST_COLLECTIONS.has(collection));
+  }
+  if (!options?.skipBroadcast) {
+    broadcastEvent('upsert', {
+      collection,
+      id,
+      doc: nextDoc,
+      revision: store.revision
+    });
+  }
   return nextDoc;
 }
 
@@ -213,6 +239,59 @@ async function startServer(): Promise<void> {
 
     const nextDoc = upsertStoreDoc(collection, id, data, merge);
     res.json({ ok: true, revision: store.revision, doc: nextDoc });
+  });
+
+  // Batch upsert documents atomically and flush once to disk
+  app.post('/api/sync/batch-upsert', (req: Request, res: Response) => {
+    const { items } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ ok: false, error: 'Invalid batch-upsert payload' });
+      return;
+    }
+
+    let applied = 0;
+    let shouldFlushNow = false;
+    const appliedEvents: Array<{ collection: string; id: string; doc: any }> = [];
+
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const { collection, id, data, merge = true } = item;
+      if (
+        typeof collection !== 'string' ||
+        !ALLOWED_COLLECTIONS.has(collection) ||
+        typeof id !== 'string' ||
+        !id.trim() ||
+        !data ||
+        typeof data !== 'object'
+      ) {
+        continue;
+      }
+      const nextDoc = upsertStoreDoc(collection, id, data, merge, {
+        skipPersist: true,
+        skipBroadcast: true
+      });
+      if (nextDoc) {
+        applied += 1;
+        if (CRITICAL_PERSIST_COLLECTIONS.has(collection)) {
+          shouldFlushNow = true;
+        }
+        appliedEvents.push({ collection, id, doc: nextDoc });
+      }
+    }
+
+    if (applied > 0) {
+      schedulePersist(shouldFlushNow);
+      appliedEvents.forEach(ev => {
+        broadcastEvent('upsert', {
+          collection: ev.collection,
+          id: ev.id,
+          doc: ev.doc,
+          revision: store.revision
+        });
+      });
+    }
+
+    res.json({ ok: true, applied, revision: store.revision });
   });
 
   // Assistente Jeniffer: secure server-side Gemini AI chat & authorized data lookup
@@ -299,7 +378,7 @@ async function startServer(): Promise<void> {
     }
     store.revision += 1;
     store.updatedAt = new Date().toISOString();
-    schedulePersist();
+    schedulePersist(CRITICAL_PERSIST_COLLECTIONS.has(collection));
 
     broadcastEvent('delete', {
       collection,
@@ -335,7 +414,7 @@ async function startServer(): Promise<void> {
     if (added > 0) {
       store.revision += 1;
       store.updatedAt = new Date().toISOString();
-      schedulePersist();
+      flushPersistNow();
       broadcastEvent('resync', { revision: store.revision });
     }
     res.json({ ok: true, added, revision: store.revision });

@@ -1,43 +1,192 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permite leitura e escrita para produtos e utilizadores da plataforma BABA SHOPPING
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isPositiveNumber(val) {
+      return val is number && val > 0;
+    }
+
+    // ===============================================================
+    // Collections
+    // ===============================================================
+
+    // Catálogo oficial (leitura pública, escrita apenas Administrador)
     match /products/{productId} {
       allow read: if true;
-      allow write: if true;
+      allow create, update, delete: if isAdmin();
     }
+
+    // Contas de utilizadores e validação de Bilhete de Identidade (KYC)
     match /users/{userId} {
-      allow read, write: if true;
+      allow get, list: if isOwner(userId) || isAdmin();
+      allow create: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.id == userId &&
+        isValidString(request.resource.data.name, 2, 120) &&
+        isValidString(request.resource.data.email, 3, 160) &&
+        request.resource.data.role == 'client' &&
+        request.resource.data.accountStatus == 'em_processamento'
+      );
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.accountStatus != 'ativo' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'idCardFront',
+          'idCardBack',
+          'idNumber',
+          'accountStatus',
+          'rejectionReason',
+          'province',
+          'city',
+          'phone',
+          'name',
+          'updatedAt'
+        ])
+      );
+      allow delete: if isAdmin() && userId != 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
     }
+
+    // Carteiras digitais
     match /wallets/{userId} {
-      allow read, write: if true;
+      allow get, list: if isOwner(userId) || isAdmin();
+      allow create: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.userId == userId
+      );
+      allow update: if isAdmin() || isOwner(userId);
+      allow delete: if isAdmin();
     }
-    match /resale_listings/{listingId} {
-      allow read, write: if true;
-    }
-    match /user_products/{id} {
-      allow read, write: if true;
-    }
-    match /negotiations/{negotiationId} {
-      allow read, write: if true;
-    }
-    match /notifications/{notificationId} {
-      allow read, write: if true;
-    }
+
+    // Pedidos de depósito (apenas o Administrador pode aprovar ou rejeitar)
     match /deposits/{depositId} {
-      allow read, write: if true;
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        isValidString(request.resource.data.userName, 1, 120) &&
+        isPositiveNumber(request.resource.data.amount) &&
+        request.resource.data.status == 'pendente' &&
+        request.resource.data.keys().hasAll(['id', 'userId', 'userName', 'amount', 'reference', 'status', 'createdAt']) &&
+        (request.resource.data.paymentMethod is string || request.resource.data.method is string)
+      );
+      allow update, delete: if isAdmin();
     }
+
+    // Pedidos de levantamento / saque (apenas o Administrador pode processar ou rejeitar)
     match /withdrawals/{withdrawalId} {
-      allow read, write: if true;
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        isValidString(request.resource.data.userName, 1, 120) &&
+        isPositiveNumber(request.resource.data.amount) &&
+        isValidString(request.resource.data.iban, 5, 64) &&
+        request.resource.data.status == 'pendente' &&
+        request.resource.data.keys().hasAll(['id', 'userId', 'userName', 'amount', 'bankName', 'iban', 'accountHolder', 'status', 'createdAt'])
+      );
+      allow update, delete: if isAdmin();
     }
+
+    // Transações financeiras
     match /transactions/{transactionId} {
-      allow read, write: if true;
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+      allow update, delete: if isAdmin();
     }
+
+    // Pedidos de compra
     match /orders/{orderId} {
-      allow read, write: if true;
+      allow get, list: if isAdmin() || (
+        isSignedIn() &&
+        (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid)
+      );
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.buyerId == request.auth.uid);
+      allow update, delete: if isAdmin();
     }
+
+    // Mercado P2P de revenda
+    match /resale_listings/{listingId} {
+      allow get, list: if resource.data.status == 'ativo' || isAdmin() || (isSignedIn() && resource.data.sellerId == request.auth.uid);
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.sellerId == request.auth.uid);
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.sellerId == request.auth.uid &&
+        request.resource.data.sellerId == resource.data.sellerId
+      );
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.sellerId == request.auth.uid);
+    }
+
+    // Inventário de produtos dos utilizadores
+    match /user_products/{id} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.currentOwnerId == request.auth.uid);
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.currentOwnerId == request.auth.uid);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.currentOwnerId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Negociações P2P
+    match /negotiations/{negotiationId} {
+      allow get, list: if isAdmin() || (
+        isSignedIn() &&
+        (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid)
+      );
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.buyerId == request.auth.uid);
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Notificações
+    match /notifications/{notificationId} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.recipientId == request.auth.uid);
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.recipientId == request.auth.uid);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.recipientId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Conversas com Assistente Jeniffer / Suporte ADM
+    match /assistant_conversations/{conversationId} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+      allow update: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Registo administrativo de contas removidas
     match /deleted_users/{userId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -35,10 +35,26 @@ import {
 } from '../data/mockData';
 import {
   auth,
+  firestore,
+  OperationType,
+  handleFirestoreError,
+  formatFirestoreErrorForUser,
+  testFirestoreConnection,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
-  updateProfile
+  updateProfile,
+  type Unsubscribe
 } from './firebase';
 
 export const DB_KEYS = {
@@ -140,69 +156,171 @@ let isInitialized = false;
 const serverSyncedCols = new Set<string>();
 const pendingWrites = new Map<string, Set<string>>();
 
-function markPendingWrite(colName: string, docId: string): void {
-  if (!pendingWrites.has(colName)) pendingWrites.set(colName, new Set());
-  pendingWrites.get(colName)!.add(docId);
+interface SyncOutboxItem {
+  collection: string;
+  id: string;
+  data: Record<string, any>;
+  merge: boolean;
+  queuedAt: number;
 }
 
-function clearPendingWrite(colName: string, docId: string): void {
-  pendingWrites.get(colName)?.delete(docId);
+const SYNC_OUTBOX_KEY = 'baba_sync_outbox_v1';
+const syncOutbox = new Map<string, SyncOutboxItem>();
+
+function outboxKey(colName: string, docId: string): string {
+  return `${colName}:${docId}`;
 }
 
-function isPendingWrite(colName: string, docId: string): boolean {
-  return Boolean(pendingWrites.get(colName)?.has(docId));
+const firestoreSyncedCols = new Set<string>();
+const firestoreDocIds = new Map<string, Set<string>>();
+
+export function toIsoTimestamp(val: any): string {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') {
+    const d = new Date(val);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  }
+  if (val instanceof Date) {
+    return Number.isNaN(val.getTime()) ? '' : val.toISOString();
+  }
+  if (typeof val === 'object') {
+    if (typeof (val as any).toDate === 'function') {
+      try {
+        return (val as any).toDate().toISOString();
+      } catch {
+        return '';
+      }
+    }
+    if (typeof (val as any).seconds === 'number') {
+      const ms = (val as any).seconds * 1000 + Math.floor(Number((val as any).nanoseconds || 0) / 1e6);
+      const d = new Date(ms);
+      return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+    }
+  }
+  return String(val);
 }
 
-function pushDocToServer(
-  colName: string,
-  docId: string,
-  payload: Record<string, any>,
-  merge = true
-): Promise<void> {
-  if (typeof window === 'undefined') return Promise.resolve();
-  return fetch('/api/sync/upsert', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    cache: 'no-store',
-    body: JSON.stringify({ collection: colName, id: docId, data: payload, merge })
-  })
-    .then(() => undefined)
-    .catch(() => undefined);
+export function isAdminUserRecord(u?: Partial<User> | null): boolean {
+  if (!u) return false;
+  return (
+    u.role === 'admin' ||
+    u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+    u.id === 'usr_admin'
+  );
 }
 
-function deleteDocOnServer(colName: string, docId: string): Promise<void> {
-  if (typeof window === 'undefined') return Promise.resolve();
-  return fetch('/api/sync/delete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    cache: 'no-store',
-    body: JSON.stringify({ collection: colName, id: docId })
-  })
-    .then(() => undefined)
-    .catch(() => undefined);
+function normalizeDepositStatus(raw: any): DepositRequest['status'] {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'aprovado' || s === 'approved' || s === 'confirmada' || s === 'confirmado') return 'aprovado';
+  if (s === 'rejeitado' || s === 'recusado' || s === 'recusada' || s === 'rejected') return 'rejeitado';
+  return 'pendente';
 }
 
-function writeDocToFirestore(
-  colName: string,
-  docId: string,
-  data: Record<string, any>,
-  merge = true
-): Promise<void> {
-  markPendingWrite(colName, docId);
-  const payload = cleanForFirestore(data);
-  return pushDocToServer(colName, docId, payload, merge).finally(() => {
-    // Short grace delay before clearing so an immediate SSE echo or poll doesn't flicker
-    setTimeout(() => clearPendingWrite(colName, docId), 400);
-  });
+function normalizeWithdrawalStatus(raw: any): WithdrawalRequest['status'] {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'processado' || s === 'aprovado' || s === 'approved' || s === 'confirmado' || s === 'confirmada' || s === 'completed') {
+    return 'processado';
+  }
+  if (s === 'rejeitado' || s === 'recusado' || s === 'recusada' || s === 'rejected') {
+    return 'rejeitado';
+  }
+  return 'pendente';
+}
+
+function normalizeAccountStatus(raw: any, isMasterOrAdmin = false): User['accountStatus'] {
+  if (isMasterOrAdmin) return 'ativo';
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'ativo' || s === 'active' || s === 'aprovado' || s === 'approved') return 'ativo';
+  if (s === 'rejeitado' || s === 'rejected' || s === 'recusado') return 'rejeitado';
+  if (s === 'suspenso' || s === 'suspended') return 'suspenso';
+  return 'em_processamento';
+}
+
+function normalizeDepositFromDoc(docId: string, raw: any): DepositRequest {
+  const id = String(raw?.id || docId);
+  const createdAt = toIsoTimestamp(raw?.createdAt) || toIsoTimestamp(raw?.updatedAt) || new Date(0).toISOString();
+  return {
+    id,
+    userId: String(raw?.userId || ''),
+    userName: String(raw?.userName || 'Cliente'),
+    amount: Number(raw?.amount) || 0,
+    paymentMethod: String(raw?.paymentMethod || raw?.method || 'multicaixa_express'),
+    reference: String(raw?.reference || id),
+    receiptProof: raw?.receiptProof || undefined,
+    status: normalizeDepositStatus(raw?.status),
+    ...(raw?.rejectionReason ? { rejectionReason: String(raw.rejectionReason) } : {}),
+    createdAt
+  };
+}
+
+function normalizeWithdrawalFromDoc(docId: string, raw: any): WithdrawalRequest {
+  const id = String(raw?.id || docId);
+  const createdAt = toIsoTimestamp(raw?.createdAt) || toIsoTimestamp(raw?.updatedAt) || new Date(0).toISOString();
+  return {
+    id,
+    userId: String(raw?.userId || ''),
+    userName: String(raw?.userName || 'Cliente'),
+    amount: Number(raw?.amount) || 0,
+    bankName: String(raw?.bankName || 'Banco em Angola'),
+    iban: String(raw?.iban || ''),
+    accountHolder: String(raw?.accountHolder || raw?.userName || 'Cliente'),
+    status: normalizeWithdrawalStatus(raw?.status),
+    ...(raw?.rejectionReason ? { rejectionReason: String(raw.rejectionReason) } : {}),
+    createdAt
+  };
+}
+
+function normalizeUserFromDoc(docId: string, raw: any, localMatch?: User): User {
+  const id = String(raw?.id || docId);
+  const isMaster = id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+  const role: User['role'] = isMaster || raw?.role === 'admin' ? 'admin' : 'client';
+  const createdAt = toIsoTimestamp(raw?.createdAt) || localMatch?.createdAt || new Date().toISOString();
+  const verifiedAt = toIsoTimestamp(raw?.verifiedAt) || localMatch?.verifiedAt;
+  return {
+    ...(localMatch || {}),
+    ...raw,
+    id,
+    name: String(raw?.name || localMatch?.name || 'Utilizador BABA'),
+    email: String(raw?.email || localMatch?.email || ''),
+    phone: isMaster ? '+244 932 200 719' : String(raw?.phone || localMatch?.phone || ''),
+    province: String(raw?.province || localMatch?.province || 'Luanda'),
+    city: String(raw?.city || localMatch?.city || 'Luanda'),
+    role,
+    idNumber: String(raw?.idNumber || localMatch?.idNumber || ''),
+    birthDate: String(raw?.birthDate || localMatch?.birthDate || ''),
+    accountStatus: normalizeAccountStatus(raw?.accountStatus ?? localMatch?.accountStatus, isMaster || role === 'admin'),
+    ...(isMaster ? { password: 'Adelina25' } : localMatch?.password && !raw?.password ? { password: localMatch.password } : {}),
+    idCardFront: raw?.idCardFront || localMatch?.idCardFront || '',
+    idCardBack: raw?.idCardBack || localMatch?.idCardBack || '',
+    ...(verifiedAt ? { verifiedAt } : {}),
+    createdAt
+  };
+}
+
+function normalizeGenericDates<T extends Record<string, any>>(docId: string, raw: any): T {
+  const out: Record<string, any> = { ...raw, id: String(raw?.id || docId) };
+  if (raw?.createdAt !== undefined) out.createdAt = toIsoTimestamp(raw.createdAt);
+  if (raw?.updatedAt !== undefined) out.updatedAt = toIsoTimestamp(raw.updatedAt);
+  if (raw?.purchaseDate !== undefined) out.purchaseDate = toIsoTimestamp(raw.purchaseDate);
+  if (raw?.verifiedAt !== undefined) out.verifiedAt = toIsoTimestamp(raw.verifiedAt);
+  return out as T;
 }
 
 function cleanForFirestore<T extends Record<string, any>>(obj: T): any {
   if (!obj || typeof obj !== 'object') return obj;
   if (Array.isArray(obj)) return obj.map(item => cleanForFirestore(item));
+  if (typeof (obj as any).toDate === 'function') {
+    try {
+      return (obj as any).toDate().toISOString();
+    } catch {
+      return new Date().toISOString();
+    }
+  }
   const res: any = {};
   for (const [k, v] of Object.entries(obj)) {
     if (v !== undefined) {
-      res[k] = (v && typeof v === 'object' && !(v instanceof Date)) ? cleanForFirestore(v) : v;
+      res[k] = v && typeof v === 'object' && !(v instanceof Date) ? cleanForFirestore(v) : v;
     }
   }
   return res;
@@ -222,6 +340,379 @@ function stripHeavyMediaForStorage(val: any): any {
     out[k] = stripHeavyMediaForStorage(v);
   }
   return out;
+}
+
+// Hydrate queued unsynced writes synchronously at module load
+(() => {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(SYNC_OUTBOX_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([k, v]: [string, any]) => {
+          if (v && typeof v === 'object' && v.collection && v.id && v.data) {
+            syncOutbox.set(k, v as SyncOutboxItem);
+            if (!pendingWrites.has(v.collection)) pendingWrites.set(v.collection, new Set());
+            pendingWrites.get(v.collection)!.add(v.id);
+          }
+        });
+      }
+    }
+  } catch {
+    // storage safe
+  }
+})();
+
+function persistOutboxToStorage(): void {
+  if (typeof window === 'undefined') return;
+  const obj: Record<string, SyncOutboxItem> = {};
+  syncOutbox.forEach((v, k) => {
+    obj[k] = v;
+  });
+  if (Object.keys(obj).length === 0) {
+    safeStorageRemove(SYNC_OUTBOX_KEY);
+    return;
+  }
+  try {
+    localStorage.setItem(SYNC_OUTBOX_KEY, JSON.stringify(obj));
+  } catch {
+    try {
+      localStorage.setItem(SYNC_OUTBOX_KEY, JSON.stringify(stripHeavyMediaForStorage(obj)));
+    } catch {
+      // Safari private mode / restricted iframe storage safe
+    }
+  }
+}
+
+function markPendingWrite(colName: string, docId: string): void {
+  if (!pendingWrites.has(colName)) pendingWrites.set(colName, new Set());
+  pendingWrites.get(colName)!.add(docId);
+}
+
+function clearPendingWrite(colName: string, docId: string): void {
+  if (syncOutbox.has(outboxKey(colName, docId))) return;
+  pendingWrites.get(colName)?.delete(docId);
+}
+
+function isPendingWrite(colName: string, docId: string): boolean {
+  return Boolean(pendingWrites.get(colName)?.has(docId) || syncOutbox.has(outboxKey(colName, docId)));
+}
+
+async function pushDocToServer(
+  colName: string,
+  docId: string,
+  payload: Record<string, any>,
+  merge = true
+): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 12000) : null;
+  try {
+    const res = await fetch('/api/sync/upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      signal: controller?.signal,
+      body: JSON.stringify({ collection: colName, id: docId, data: payload, merge })
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`HTTP_${res.status}: ${errText || res.statusText}`);
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function pushBatchToServer(items: SyncOutboxItem[]): Promise<void> {
+  if (typeof window === 'undefined' || items.length === 0) return;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 15000) : null;
+  try {
+    const res = await fetch('/api/sync/batch-upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      signal: controller?.signal,
+      body: JSON.stringify({
+        items: items.map(it => ({
+          collection: it.collection,
+          id: it.id,
+          data: it.data,
+          merge: it.merge
+        }))
+      })
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`HTTP_${res.status}: ${errText || res.statusText}`);
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function stripPayloadMediaFallback(item: SyncOutboxItem): Record<string, any> | null {
+  if (item.collection === 'users' && (item.data.idCardFront || item.data.idCardBack)) {
+    return {
+      ...item.data,
+      idCardFront: '',
+      idCardBack: ''
+    };
+  }
+  if (item.collection === 'deposits' && item.data.receiptProof) {
+    return {
+      ...item.data,
+      receiptProof: ''
+    };
+  }
+  return null;
+}
+
+let outboxFlushInFlight: Promise<void> | null = null;
+let outboxCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
+let outboxCoalesceWaiters: Array<() => void> = [];
+let outboxRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let outboxRetryDelayMs = 1500;
+
+function scheduleOutboxRetry(): void {
+  if (typeof window === 'undefined' || syncOutbox.size === 0 || outboxRetryTimer) return;
+  const delay = outboxRetryDelayMs;
+  outboxRetryDelayMs = Math.min(10000, Math.round(outboxRetryDelayMs * 1.8));
+  outboxRetryTimer = setTimeout(() => {
+    outboxRetryTimer = null;
+    void flushSyncOutbox();
+  }, delay);
+}
+
+export async function flushSyncOutbox(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (outboxFlushInFlight) return outboxFlushInFlight;
+
+  outboxFlushInFlight = (async () => {
+    try {
+      let rounds = 0;
+      while (syncOutbox.size > 0 && rounds < 5) {
+        rounds += 1;
+        const snapshot = Array.from(syncOutbox.entries());
+
+        // Split into batches keeping JSON under ~2.5MB
+        const batches: Array<Array<[string, SyncOutboxItem]>> = [];
+        let currentBatch: Array<[string, SyncOutboxItem]> = [];
+        let currentBytes = 0;
+
+        for (const entry of snapshot) {
+          const approxSize = JSON.stringify(entry[1].data).length;
+          if (currentBatch.length >= 15 || (currentBatch.length > 0 && currentBytes + approxSize > 2_500_000)) {
+            batches.push(currentBatch);
+            currentBatch = [];
+            currentBytes = 0;
+          }
+          currentBatch.push(entry);
+          currentBytes += approxSize;
+        }
+        if (currentBatch.length > 0) batches.push(currentBatch);
+
+        let hadTransientFailure = false;
+
+        for (const batch of batches) {
+          const itemsOnly = batch.map(([, v]) => v);
+          try {
+            await pushBatchToServer(itemsOnly);
+            batch.forEach(([k, item]) => {
+              const current = syncOutbox.get(k);
+              if (current && current.queuedAt === item.queuedAt) {
+                syncOutbox.delete(k);
+                setTimeout(() => clearPendingWrite(item.collection, item.id), 450);
+              }
+            });
+            outboxRetryDelayMs = 1500;
+          } catch {
+            // Fall back to sending items individually so one oversized or failing doc never blocks others
+            for (const [k, item] of batch) {
+              try {
+                await pushDocToServer(item.collection, item.id, item.data, item.merge);
+                const current = syncOutbox.get(k);
+                if (current && current.queuedAt === item.queuedAt) {
+                  syncOutbox.delete(k);
+                  setTimeout(() => clearPendingWrite(item.collection, item.id), 450);
+                }
+                outboxRetryDelayMs = 1500;
+              } catch (err: any) {
+                const msg = String(err?.message || '');
+                const isSizeErr =
+                  msg.includes('HTTP_413') ||
+                  msg.toLowerCase().includes('too large') ||
+                  msg.toLowerCase().includes('entity');
+                if (isSizeErr) {
+                  const lightweight = stripPayloadMediaFallback(item);
+                  if (lightweight) {
+                    try {
+                      await pushDocToServer(item.collection, item.id, lightweight, item.merge);
+                      const current = syncOutbox.get(k);
+                      if (current && current.queuedAt === item.queuedAt) {
+                        syncOutbox.delete(k);
+                        setTimeout(() => clearPendingWrite(item.collection, item.id), 450);
+                      }
+                      continue;
+                    } catch {
+                      hadTransientFailure = true;
+                    }
+                  }
+                } else if (msg.includes('HTTP_400')) {
+                  // Drop permanently invalid payload so it does not stall future sync
+                  syncOutbox.delete(k);
+                  clearPendingWrite(item.collection, item.id);
+                } else {
+                  hadTransientFailure = true;
+                }
+              }
+            }
+          }
+        }
+
+        persistOutboxToStorage();
+        if (hadTransientFailure) {
+          scheduleOutboxRetry();
+          break;
+        }
+      }
+    } finally {
+      outboxFlushInFlight = null;
+    }
+  })();
+
+  return outboxFlushInFlight;
+}
+
+function scheduleOutboxFlush(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  return new Promise<void>(resolve => {
+    outboxCoalesceWaiters.push(resolve);
+    if (outboxCoalesceTimer) return;
+    outboxCoalesceTimer = setTimeout(() => {
+      outboxCoalesceTimer = null;
+      const waiters = outboxCoalesceWaiters;
+      outboxCoalesceWaiters = [];
+      flushSyncOutbox()
+        .catch(() => undefined)
+        .finally(() => {
+          waiters.forEach(w => w());
+        });
+    }, 12);
+  });
+}
+
+function deleteDocOnServer(colName: string, docId: string): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  const serverPromise = fetch('/api/sync/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify({ collection: colName, id: docId })
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+
+  const cloudPromise = deleteDoc(doc(firestore, colName, docId)).catch(() => undefined);
+  return Promise.all([serverPromise, cloudPromise]).then(() => undefined);
+}
+
+function sanitizePayloadForCloudFirestore(colName: string, payload: Record<string, any>): Record<string, any> {
+  const cleaned = cleanForFirestore(payload);
+  if (colName === 'users' && cleaned && typeof cleaned === 'object' && 'password' in cleaned) {
+    const { password: _pw, ...safeUser } = cleaned;
+    return safeUser;
+  }
+  return cleaned;
+}
+
+export async function writeDocToCloudFirestore(
+  colName: string,
+  docId: string,
+  data: Record<string, any>,
+  merge = true,
+  strictThrow = false
+): Promise<void> {
+  if (typeof window === 'undefined' || !colName || !docId) return;
+  const cloudPayload = sanitizePayloadForCloudFirestore(colName, data);
+  const path = `${colName}/${docId}`;
+  try {
+    await setDoc(doc(firestore, colName, docId), cloudPayload, { merge });
+  } catch (err: any) {
+    const msg = String(err?.message || '').toLowerCase();
+    const code = String(err?.code || '').toLowerCase();
+    if (code === 'resource-exhausted' || msg.includes('exceeds the maximum') || msg.includes('too large') || msg.includes('bytes')) {
+      const stripped = stripPayloadMediaFallback({
+        collection: colName,
+        id: docId,
+        data: cloudPayload,
+        merge,
+        queuedAt: Date.now()
+      });
+      if (stripped) {
+        try {
+          await setDoc(doc(firestore, colName, docId), stripped, { merge });
+          return;
+        } catch (retryErr) {
+          handleFirestoreError(retryErr, merge ? OperationType.UPDATE : OperationType.CREATE, path, strictThrow);
+          return;
+        }
+      }
+    }
+    handleFirestoreError(err, merge ? OperationType.UPDATE : OperationType.CREATE, path, strictThrow);
+  }
+}
+
+export async function persistDocToFirestoreStrict(
+  colName: string,
+  docId: string,
+  data: Record<string, any>,
+  merge = true
+): Promise<void> {
+  const payload = cleanForFirestore(data);
+  const key = outboxKey(colName, docId);
+  markPendingWrite(colName, docId);
+  syncOutbox.set(key, {
+    collection: colName,
+    id: docId,
+    data: payload,
+    merge,
+    queuedAt: Date.now()
+  });
+  persistOutboxToStorage();
+  void scheduleOutboxFlush();
+
+  const knownInCloud = Boolean(firestoreDocIds.get(colName)?.has(docId));
+  const mustEnforceCloud = Boolean(auth.currentUser) || knownInCloud;
+  try {
+    await writeDocToCloudFirestore(colName, docId, data, merge, mustEnforceCloud);
+  } finally {
+    setTimeout(() => clearPendingWrite(colName, docId), 450);
+  }
+}
+
+function writeDocToFirestore(
+  colName: string,
+  docId: string,
+  data: Record<string, any>,
+  merge = true
+): Promise<void> {
+  const payload = cleanForFirestore(data);
+  const key = outboxKey(colName, docId);
+  markPendingWrite(colName, docId);
+  syncOutbox.set(key, {
+    collection: colName,
+    id: docId,
+    data: payload,
+    merge,
+    queuedAt: Date.now()
+  });
+  persistOutboxToStorage();
+  const outboxPromise = scheduleOutboxFlush();
+  const cloudPromise = writeDocToCloudFirestore(colName, docId, data, merge, false).catch(() => undefined);
+  return Promise.all([outboxPromise, cloudPromise]).then(() => undefined);
 }
 
 function backupToStorage<T>(key: string, val: T): void {
@@ -467,15 +958,28 @@ function applyServerDocDelete(colName: string, id: string): void {
   dispatchDbChange();
 }
 
-async function syncFromSharedServer(): Promise<boolean> {
+async function syncFromSharedServer(forceFull = false): Promise<boolean> {
   if (typeof window === 'undefined') return false;
-  if (serverSyncInFlight) return serverSyncInFlight;
+  if (serverSyncInFlight && !forceFull) return serverSyncInFlight;
+  if (serverSyncInFlight && forceFull) {
+    await serverSyncInFlight.catch(() => false);
+  }
 
   serverSyncInFlight = (async () => {
     try {
+      // Flush any pending local mutations FIRST so server snapshot includes them
+      if (syncOutbox.size > 0) {
+        await flushSyncOutbox().catch(() => undefined);
+      }
+
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timer = controller ? setTimeout(() => controller.abort(), 7000) : null;
-      const sinceParam = lastSyncedRevision > 0 ? `&sinceRevision=${lastSyncedRevision}` : '';
+      const timer = controller ? setTimeout(() => controller.abort(), 8000) : null;
+      const useSinceRevision =
+        !forceFull &&
+        lastSyncedRevision > 0 &&
+        serverSyncedCols.size > 0 &&
+        syncOutbox.size === 0;
+      const sinceParam = useSinceRevision ? `&sinceRevision=${lastSyncedRevision}` : '';
       const res = await fetch(`/api/sync/state?t=${Date.now()}${sinceParam}`, {
         cache: 'no-store',
         signal: controller?.signal
@@ -483,7 +987,7 @@ async function syncFromSharedServer(): Promise<boolean> {
       if (timer) clearTimeout(timer);
       if (!res.ok) return false;
       const json = await res.json();
-      if (json?.unchanged === true && serverSyncedCols.size > 0) {
+      if (json?.unchanged === true && serverSyncedCols.size > 0 && !forceFull) {
         return true;
       }
       const cols = json?.collections;
@@ -495,7 +999,7 @@ async function syncFromSharedServer(): Promise<boolean> {
           data: () => val
         }));
 
-      // 1. Apply deleted_users first
+      // 1. Apply deleted_users first & purge any deleted users/outbox references locally
       const deletedDocs = toSnapDocs(cols.deleted_users);
       if (deletedDocs.length > 0) {
         const deletedSet = new Set<string>(memoryDeletedUserIds);
@@ -509,59 +1013,133 @@ async function syncFromSharedServer(): Promise<boolean> {
         backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
       }
 
-      // 2. If server store has no users yet, seed initial admin + any local non-deleted records once
+      if (memoryDeletedUserIds.length > 0) {
+        const deletedLookup = new Set(memoryDeletedUserIds);
+        memoryUsers = memoryUsers.filter(u => u && !deletedLookup.has(u.id));
+        memoryUserProducts = memoryUserProducts.filter(up => up && !deletedLookup.has(up.currentOwnerId));
+        memoryResaleListings = memoryResaleListings.filter(l => l && !deletedLookup.has(l.sellerId));
+        memoryDeletedUserIds.forEach(uid => {
+          syncOutbox.delete(outboxKey('users', uid));
+          syncOutbox.delete(outboxKey('wallets', uid));
+        });
+        persistOutboxToStorage();
+      }
+
+      // 2. Bidirectional local-to-server reconciliation:
+      // Upload any non-deleted local records missing on the server (so offline/mobile writes never vanish!)
+      const seedCols: Record<string, Record<string, any>> = {
+        users: {},
+        wallets: {},
+        deposits: {},
+        withdrawals: {},
+        resale_listings: {},
+        user_products: {},
+        negotiations: {},
+        notifications: {},
+        transactions: {},
+        orders: {}
+      };
+      let missingCount = 0;
+
       const serverUsersMap = cols.users || {};
       if (Object.keys(serverUsersMap).length === 0) {
-        const seedCols: Record<string, Record<string, any>> = {
-          users: {},
-          wallets: {},
-          deposits: {},
-          withdrawals: {},
-          resale_listings: {},
-          user_products: {},
-          negotiations: {},
-          notifications: {},
-          transactions: {},
-          orders: {},
-          products: {}
-        };
         INITIAL_USERS.forEach(u => {
           seedCols.users[u.id] = cleanForFirestore(u);
-        });
-        memoryUsers.forEach(u => {
-          if (u && u.id && !memoryDeletedUserIds.includes(u.id)) {
-            seedCols.users[u.id] = cleanForFirestore(u);
-          }
+          missingCount += 1;
         });
         Object.entries(INITIAL_WALLETS).forEach(([uid, w]) => {
-          seedCols.wallets[uid] = cleanForFirestore(w);
-        });
-        Object.entries(memoryWallets).forEach(([uid, w]) => {
-          if (uid && w && !memoryDeletedUserIds.includes(uid)) {
+          if (!cols.wallets?.[uid]) {
             seedCols.wallets[uid] = cleanForFirestore(w);
+            missingCount += 1;
           }
         });
-        memoryDeposits.forEach(x => { if (x?.id) seedCols.deposits[x.id] = cleanForFirestore(x); });
-        memoryWithdrawals.forEach(x => { if (x?.id) seedCols.withdrawals[x.id] = cleanForFirestore(x); });
-        memoryResaleListings.forEach(x => { if (x?.id) seedCols.resale_listings[x.id] = cleanForFirestore(x); });
-        memoryUserProducts.forEach(x => { if (x?.id) seedCols.user_products[x.id] = cleanForFirestore(x); });
-        memoryNegotiations.forEach(x => { if (x?.id) seedCols.negotiations[x.id] = cleanForFirestore(x); });
-        memoryNotifications.forEach(x => { if (x?.id) seedCols.notifications[x.id] = cleanForFirestore(x); });
-        memoryTransactions.forEach(x => { if (x?.id) seedCols.transactions[x.id] = cleanForFirestore(x); });
-        memoryOrders.forEach(x => { if (x?.id) seedCols.orders[x.id] = cleanForFirestore(x); });
-        memoryProducts.forEach(x => { if (x?.id) seedCols.products[x.id] = cleanForFirestore(x); });
+      }
 
-        await fetch('/api/sync/seed-missing', {
+      memoryUsers.forEach(u => {
+        if (u && u.id && !memoryDeletedUserIds.includes(u.id) && !serverUsersMap[u.id] && !seedCols.users[u.id]) {
+          seedCols.users[u.id] = cleanForFirestore(u);
+          missingCount += 1;
+        }
+      });
+      Object.entries(memoryWallets).forEach(([uid, w]) => {
+        if (uid && w && !memoryDeletedUserIds.includes(uid) && !cols.wallets?.[uid] && !seedCols.wallets[uid]) {
+          seedCols.wallets[uid] = cleanForFirestore(w);
+          missingCount += 1;
+        }
+      });
+      memoryDeposits.forEach(x => {
+        if (x?.id && !cols.deposits?.[x.id]) {
+          seedCols.deposits[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryWithdrawals.forEach(x => {
+        if (x?.id && !cols.withdrawals?.[x.id]) {
+          seedCols.withdrawals[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryTransactions.forEach(x => {
+        if (x?.id && !cols.transactions?.[x.id]) {
+          seedCols.transactions[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryOrders.forEach(x => {
+        if (x?.id && !cols.orders?.[x.id]) {
+          seedCols.orders[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryNegotiations.forEach(x => {
+        if (x?.id && !cols.negotiations?.[x.id]) {
+          seedCols.negotiations[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryNotifications.forEach(x => {
+        if (x?.id && !cols.notifications?.[x.id]) {
+          seedCols.notifications[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryUserProducts.forEach(x => {
+        if (x?.id && !memoryDeletedUserIds.includes(x.currentOwnerId) && !cols.user_products?.[x.id]) {
+          seedCols.user_products[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+      memoryResaleListings.forEach(x => {
+        if (x?.id && !memoryDeletedUserIds.includes(x.sellerId) && !cols.resale_listings?.[x.id]) {
+          seedCols.resale_listings[x.id] = cleanForFirestore(x);
+          missingCount += 1;
+        }
+      });
+
+      if (missingCount > 0) {
+        let seedRes = await fetch('/api/sync/seed-missing', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           cache: 'no-store',
           body: JSON.stringify({ collections: seedCols })
-        }).catch(() => {});
-        const reRes = await fetch(`/api/sync/state?t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
-        if (reRes && reRes.ok) {
-          const reJson = await reRes.json();
-          if (reJson?.collections) {
-            Object.assign(cols, reJson.collections);
+        }).catch(() => null);
+
+        if (seedRes && seedRes.status === 413) {
+          seedRes = await fetch('/api/sync/seed-missing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({ collections: stripHeavyMediaForStorage(seedCols) })
+          }).catch(() => null);
+        }
+
+        if (seedRes && seedRes.ok) {
+          const reRes = await fetch(`/api/sync/state?t=${Date.now()}`, { cache: 'no-store' }).catch(() => null);
+          if (reRes && reRes.ok) {
+            const reJson = await reRes.json();
+            if (reJson?.collections) {
+              Object.assign(cols, reJson.collections);
+            }
           }
         }
       }
@@ -692,6 +1270,10 @@ async function syncFromSharedServer(): Promise<boolean> {
   return serverSyncInFlight;
 }
 
+export async function forceSyncFromSharedServer(): Promise<boolean> {
+  return syncFromSharedServer(true);
+}
+
 /**
  * Initialize real-time Shared Server (SSE) + Cloud Firestore listeners on all collections
  */
@@ -775,10 +1357,13 @@ export function initDatabase(): void {
       } catch {}
     };
     connectSse();
-    void syncFromSharedServer();
+    void flushSyncOutbox().then(() => syncFromSharedServer(true));
 
-    // Fallback poll when SSE is throttled or disconnected
+    // Fallback poll when SSE is throttled or disconnected or outbox still has unsent items
     setInterval(() => {
+      if (syncOutbox.size > 0) {
+        void flushSyncOutbox();
+      }
       if (!es || es.readyState !== 1) {
         if (es && es.readyState === 2) connectSse();
         void syncFromSharedServer();
@@ -789,12 +1374,12 @@ export function initDatabase(): void {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         if (!es || es.readyState === 2) connectSse();
-        void syncFromSharedServer();
+        void flushSyncOutbox().then(() => syncFromSharedServer(true));
       }
     });
     window.addEventListener('online', () => {
       if (!es || es.readyState === 2) connectSse();
-      void syncFromSharedServer();
+      void flushSyncOutbox().then(() => syncFromSharedServer(true));
     });
   }
 }
@@ -817,8 +1402,10 @@ export function getProducts(): Product[] {
     if (p && p.id) {
       const existing = map.get(p.id) || p;
       const merged = { ...existing, ...p };
-      const safePrice = Math.max(5000, Math.min(450000, Number(merged.officialPrice) || 5000));
-      const safeResale = Math.max(safePrice, Math.min(450000, Number(merged.suggestedResalePrice) || Math.round(safePrice * 1.35)));
+      const numOfficial = Number(merged.officialPrice);
+      const safePrice = Number.isFinite(numOfficial) && numOfficial > 0 ? numOfficial : (existing.officialPrice || 5000);
+      const numResale = Number(merged.suggestedResalePrice);
+      const safeResale = Number.isFinite(numResale) && numResale > 0 ? numResale : Math.round(safePrice * 1.35);
       map.set(p.id, {
         ...merged,
         officialPrice: safePrice,
@@ -830,6 +1417,7 @@ export function getProducts(): Product[] {
 }
 
 export function updateProduct(id: string, updates: Partial<Product>): Product {
+  assertAdminCaller();
   const idx = memoryProducts.findIndex(p => p.id === id);
   if (idx === -1) throw new Error('Produto não encontrado');
   const updated = { ...memoryProducts[idx], ...updates };
@@ -843,6 +1431,7 @@ export function updateProduct(id: string, updates: Partial<Product>): Product {
 }
 
 export function createProduct(productData: Omit<Product, 'id'>): Product {
+  assertAdminCaller();
   const newProduct: Product = {
     ...productData,
     id: `prod_${Date.now()}`
@@ -892,21 +1481,282 @@ export function getUserInviteCode(user?: Pick<User, 'id' | 'name'> | null): stri
   return `BABA-${firstName}${suffix}`;
 }
 
-export async function syncUsersFromFirestore(): Promise<User[]> {
-  try {
-    await syncFromSharedServer();
-  } catch (err) {
-    console.warn('syncUsersFromSharedServer notice:', err);
+function applyCloudSnapshotDocs(
+  colName: string,
+  docs: Array<{ id: string; data: any }>
+): void {
+  firestoreSyncedCols.add(colName);
+  const prevCloudIds = firestoreDocIds.get(colName) || new Set<string>();
+  const nextCloudIds = new Set<string>();
+  docs.forEach(d => {
+    if (d.id) nextCloudIds.add(d.id);
+  });
+  firestoreDocIds.set(colName, nextCloudIds);
+
+  const removedFromCloud = new Set<string>();
+  prevCloudIds.forEach(oldId => {
+    if (!nextCloudIds.has(oldId) && !isPendingWrite(colName, oldId)) {
+      removedFromCloud.add(oldId);
+    }
+  });
+
+  if (colName === 'users') {
+    const map = new Map<string, User>();
+    memoryUsers.forEach(u => {
+      if (u?.id && !removedFromCloud.has(u.id) && !memoryDeletedUserIds.includes(u.id)) {
+        map.set(u.id, u);
+      }
+    });
+    docs.forEach(({ id, data }) => {
+      const uid = String(data?.id || id);
+      if (!uid) return;
+      if (uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && memoryDeletedUserIds.includes(uid)) return;
+      if (isPendingWrite('users', uid) && map.has(uid)) return;
+      map.set(uid, normalizeUserFromDoc(uid, data, map.get(uid)));
+    });
+    memoryUsers = Array.from(map.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    backupToStorage(DB_KEYS.USERS, memoryUsers);
+    dispatchDbChange();
+    return;
   }
+
+  if (colName === 'deposits') {
+    const map = new Map<string, DepositRequest>();
+    memoryDeposits.forEach(d => {
+      if (d?.id && !removedFromCloud.has(d.id)) map.set(d.id, d);
+    });
+    docs.forEach(({ id, data }) => {
+      const depId = String(data?.id || id);
+      if (!depId) return;
+      if (isPendingWrite('deposits', depId) && map.has(depId)) return;
+      map.set(depId, normalizeDepositFromDoc(depId, data));
+    });
+    memoryDeposits = Array.from(map.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+    dispatchDbChange();
+    return;
+  }
+
+  if (colName === 'withdrawals') {
+    const map = new Map<string, WithdrawalRequest>();
+    memoryWithdrawals.forEach(w => {
+      if (w?.id && !removedFromCloud.has(w.id)) map.set(w.id, w);
+    });
+    docs.forEach(({ id, data }) => {
+      const wthId = String(data?.id || id);
+      if (!wthId) return;
+      if (isPendingWrite('withdrawals', wthId) && map.has(wthId)) return;
+      map.set(wthId, normalizeWithdrawalFromDoc(wthId, data));
+    });
+    memoryWithdrawals = Array.from(map.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+    dispatchDbChange();
+    return;
+  }
+
+  if (colName === 'wallets') {
+    const nextWallets: Record<string, Wallet> = { ...memoryWallets };
+    removedFromCloud.forEach(id => {
+      delete nextWallets[id];
+    });
+    docs.forEach(({ id, data }) => {
+      const uid = String(data?.userId || id);
+      if (!uid || memoryDeletedUserIds.includes(uid)) return;
+      if (isPendingWrite('wallets', uid) && nextWallets[uid]) return;
+      nextWallets[uid] = normalizeGenericDates<Wallet>(uid, { ...data, userId: uid });
+    });
+    memoryWallets = nextWallets;
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    dispatchDbChange();
+    return;
+  }
+
+  const mergeCollectionArray = <T extends { id: string; createdAt?: string; updatedAt?: string }>(
+    current: T[],
+    sortDesc = true
+  ): T[] => {
+    const map = new Map<string, T>();
+    current.forEach(item => {
+      if (item?.id && !removedFromCloud.has(item.id)) map.set(item.id, item);
+    });
+    docs.forEach(({ id, data }) => {
+      const docId = String(data?.id || id);
+      if (!docId) return;
+      if (isPendingWrite(colName, docId) && map.has(docId)) return;
+      map.set(docId, normalizeGenericDates<T>(docId, data));
+    });
+    const list = Array.from(map.values());
+    if (sortDesc) {
+      list.sort(
+        (a, b) =>
+          new Date(b.createdAt || b.updatedAt || 0).getTime() -
+          new Date(a.createdAt || a.updatedAt || 0).getTime()
+      );
+    }
+    return list;
+  };
+
+  if (colName === 'orders') {
+    memoryOrders = mergeCollectionArray<Order>(memoryOrders);
+    backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+  } else if (colName === 'resale_listings') {
+    memoryResaleListings = mergeCollectionArray<ResaleListing>(memoryResaleListings);
+    backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+  } else if (colName === 'negotiations') {
+    memoryNegotiations = mergeCollectionArray<Negotiation>(memoryNegotiations);
+    backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+  } else if (colName === 'transactions') {
+    memoryTransactions = mergeCollectionArray<Transaction>(memoryTransactions);
+    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+  } else if (colName === 'notifications') {
+    memoryNotifications = mergeCollectionArray<Notification>(memoryNotifications);
+    backupToStorage(DB_KEYS.NOTIFICATIONS, memoryNotifications);
+  } else if (colName === 'user_products') {
+    memoryUserProducts = mergeCollectionArray<UserProduct>(memoryUserProducts, false);
+    backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+  } else if (colName === 'assistant_conversations') {
+    memoryAssistantConversations = mergeCollectionArray<AssistantConversation>(memoryAssistantConversations);
+    backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
+  }
+  dispatchDbChange();
+}
+
+export async function fetchCloudFirestoreCollection(
+  colName: string,
+  strictThrow = false
+): Promise<number> {
+  try {
+    const snap = await getDocs(collection(firestore, colName));
+    const docs = snap.docs.map(d => ({ id: d.id, data: d.data() }));
+    applyCloudSnapshotDocs(colName, docs);
+    return docs.length;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, colName, strictThrow);
+    return 0;
+  }
+}
+
+export interface AdminRealtimeOptions {
+  onCollectionSync?: (colName: string, count: number) => void;
+  onError?: (colName: string, message: string, code?: string) => void;
+}
+
+export function subscribeAdminFirestoreRealtime(
+  options: AdminRealtimeOptions = {}
+): () => void {
+  const caller = getCurrentUser();
+  if (!isAdminUserRecord(caller)) {
+    return () => {};
+  }
+
+  const targetCollections = [
+    'users',
+    'deposits',
+    'withdrawals',
+    'orders',
+    'resale_listings',
+    'negotiations',
+    'wallets',
+    'transactions',
+    'notifications',
+    'assistant_conversations'
+  ];
+
+  void testFirestoreConnection();
+
+  const unsubscribers: Unsubscribe[] = [];
+  targetCollections.forEach(colName => {
+    try {
+      const q = query(collection(firestore, colName));
+      const unsub = onSnapshot(
+        q,
+        snapshot => {
+          const docs = snapshot.docs.map(d => ({ id: d.id, data: d.data() }));
+          applyCloudSnapshotDocs(colName, docs);
+          options.onCollectionSync?.(colName, docs.length);
+        },
+        err => {
+          const info = handleFirestoreError(err, OperationType.LIST, colName, false);
+          options.onError?.(colName, formatFirestoreErrorForUser(err), info.code);
+        }
+      );
+      unsubscribers.push(unsub);
+    } catch (err: any) {
+      const info = handleFirestoreError(err, OperationType.LIST, colName, false);
+      options.onError?.(colName, formatFirestoreErrorForUser(err), info.code);
+    }
+  });
+
+  return () => {
+    unsubscribers.forEach(unsub => {
+      try {
+        unsub();
+      } catch {}
+    });
+  };
+}
+
+export async function signInAdminFirebaseAuth(email: string, password: string): Promise<void> {
+  const cleanEmail = (email || '').trim();
+  const cleanPass = (password || '').trim();
+  if (!cleanEmail || !cleanPass) {
+    throw new Error('Insere o email e a palavra-passe do Administrador no Firebase.');
+  }
+  const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+  const uid = cred.user.uid;
+  let isAuthorizedAdmin = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+  if (!isAuthorizedAdmin) {
+    try {
+      const userSnap = await getDoc(doc(firestore, 'users', uid));
+      if (userSnap.exists() && userSnap.data()?.role === 'admin') {
+        isAuthorizedAdmin = true;
+      }
+    } catch {}
+  }
+  if (!isAuthorizedAdmin) {
+    try {
+      await signOut(auth);
+    } catch {}
+    throw new Error('Esta conta Firebase não possui permissão de Administrador (role: "admin").');
+  }
+}
+
+export async function syncUsersFromFirestore(): Promise<User[]> {
+  await Promise.allSettled([
+    syncFromSharedServer(true),
+    fetchCloudFirestoreCollection('users', false)
+  ]);
   return getUsers();
 }
 
-export async function syncAdminCollectionsFromFirestore(): Promise<void> {
-  try {
-    await syncFromSharedServer();
-  } catch (err) {
-    console.warn('syncAdminCollections notice:', err);
-  }
+export async function syncAdminCollectionsFromFirestore(): Promise<{
+  firestoreErrors: Array<{ collection: string; message: string; code?: string }>;
+}> {
+  const firestoreErrors: Array<{ collection: string; message: string; code?: string }> = [];
+  const adminCols = ['users', 'deposits', 'withdrawals', 'orders', 'resale_listings', 'negotiations', 'wallets', 'transactions'];
+
+  await Promise.allSettled([
+    syncFromSharedServer(true),
+    ...adminCols.map(async col => {
+      try {
+        await fetchCloudFirestoreCollection(col, true);
+      } catch (err: any) {
+        firestoreErrors.push({
+          collection: col,
+          message: err?.message || formatFirestoreErrorForUser(err),
+          code: err?.code
+        });
+      }
+    })
+  ]);
+
+  return { firestoreErrors };
 }
 
 export function getCurrentUser(): User | null {
@@ -1038,6 +1888,9 @@ export async function registerUser(
     docBack = idCardFrontOrBack || '';
   }
 
+  // Ensure latest server user directory before duplicate check
+  await Promise.race([syncUsersFromFirestore(), new Promise<void>(res => setTimeout(res, 2000))]);
+
   // Prevent duplicate registration with existing email or phone
   const cleanDigits = (s: any) => (s ? String(s).replace(/\D+/g, '') : '');
   const normPhone = (d: string) => (d.startsWith('244') && d.length > 9 ? d.slice(3) : d);
@@ -1070,7 +1923,9 @@ export async function registerUser(
     console.log('Firebase Auth user created with real name & UID:', name, authUid);
   } catch (authErr: any) {
     if (authErr.code === 'auth/email-already-in-use') {
-      throw new Error('Este email já está registado na plataforma. Por favor, faz login.');
+      // Conta não existe na base de dados da plataforma (verificado acima): cria registo na plataforma
+      console.warn('Firebase Auth email-already-in-use orphan fallback:', email);
+      authUid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     } else if (authErr.code === 'auth/weak-password') {
       throw new Error('A palavra-passe deve conter pelo menos 6 caracteres.');
     } else if (authErr.code === 'auth/invalid-email') {
@@ -1138,12 +1993,6 @@ export async function registerUser(
   memoryTransactions = [welcomeTx, ...memoryTransactions];
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
-  // Não autenticar automaticamente — a conta fica em revisão até o Administrador validar o BI e aceitar
-  try {
-    await signOut(auth);
-  } catch {
-    // safe ignore
-  }
   const activeId = memoryCurrentUserId || safeStorageGet(DB_KEYS.CURRENT_USER_ID);
   if (activeId === userId) {
     memoryCurrentUserId = null;
@@ -1153,7 +2002,7 @@ export async function registerUser(
   }
 
   // Create pending review notification for the new user
-  createNotification(
+  const userPendingNotif = createNotification(
     userId,
     'Conta em Revisão pelo Administrador 📋',
     'A tua conta foi criada e encontra-se em revisão. Assim que o Administrador validar os teus dados e o Bilhete de Identidade, poderás iniciar sessão e usar os 500,00 Kz de bónus.',
@@ -1162,7 +2011,7 @@ export async function registerUser(
   );
 
   // Notificar imediatamente o Administrador sobre novo documento BI para validar
-  createNotification(
+  const adminBiNotif = createNotification(
     'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
     'Novo Documento BI para Validar 📋',
     `${newUser.name} (${newUser.phone}) submeteu o BI ${newUser.idNumber} (${newUser.province}) e aguarda validação no Painel Adm.`,
@@ -1170,18 +2019,27 @@ export async function registerUser(
     'admin'
   );
 
-  // 2. Direct AWAIT write to Cloud Firestore (com timeout de segurança)
+  // 2. Enviar para Cloud Firestore e servidor partilhado ANTES de terminar sessão Firebase Auth (para request.auth.uid == userId)
   try {
     await Promise.race([
       Promise.all([
         writeDocToFirestore('users', userId, newUser, true),
         writeDocToFirestore('wallets', userId, newWallet, true),
-        writeDocToFirestore('transactions', welcomeTx.id, welcomeTx, true)
-      ]),
-      new Promise<void>(res => setTimeout(res, 5000))
+        writeDocToFirestore('transactions', welcomeTx.id, welcomeTx, true),
+        writeDocToFirestore('notifications', userPendingNotif.id, userPendingNotif, false),
+        writeDocToFirestore('notifications', adminBiNotif.id, adminBiNotif, false)
+      ]).then(() => flushSyncOutbox()),
+      new Promise<void>(res => setTimeout(res, 6500))
     ]);
   } catch (fsErr) {
-    console.warn('Firestore write note:', fsErr);
+    console.warn('Server/Firestore sync note:', fsErr);
+  } finally {
+    // Não autenticar automaticamente — a conta fica em revisão até o Administrador validar o BI e aceitar
+    try {
+      await signOut(auth);
+    } catch {
+      // safe ignore
+    }
   }
 
   dispatchDbChange();
@@ -1330,31 +2188,93 @@ export async function loginUser(identifier: string, password?: string): Promise<
     }
   };
 
-  // 4. Se nenhuma conta existente corresponder aos dados -> RECUSAR ENTRADA
+  // 4. Se nenhuma conta local corresponder e for um email, tentar autenticar diretamente via Firebase Auth + Cloud Firestore
+  let authenticatedViaFirebase = false;
+  if (!matched && rawId.includes('@')) {
+    try {
+      const cred = await signInWithEmailAndPassword(auth, rawId, passTerm);
+      authenticatedViaFirebase = true;
+      const uid = cred.user.uid;
+
+      let fsDocData: any = null;
+      let fsDocId = uid;
+      try {
+        const directSnap = await getDoc(doc(firestore, 'users', uid));
+        if (directSnap.exists()) {
+          fsDocData = directSnap.data();
+          fsDocId = directSnap.id;
+        } else {
+          const emailSnap = await getDocs(query(collection(firestore, 'users'), where('email', '==', rawId)));
+          if (!emailSnap.empty) {
+            fsDocData = emailSnap.docs[0].data();
+            fsDocId = emailSnap.docs[0].id;
+          }
+        }
+      } catch {}
+
+      if (fsDocData) {
+        matched = normalizeUserFromDoc(fsDocId, fsDocData);
+      } else if (uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
+        matched = {
+          ...INITIAL_USERS[0],
+          id: uid,
+          email: cred.user.email || rawId,
+          role: 'admin',
+          accountStatus: 'ativo'
+        };
+      }
+    } catch (authErr: any) {
+      if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential') {
+        throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
+      }
+    }
+  }
+
+  // Se nenhuma conta existente corresponder aos dados -> RECUSAR ENTRADA
   if (!matched) {
     throw new Error('Conta não encontrada! Verifica o teu telefone/email ou cria uma nova conta primeiro.');
   }
 
-  // 5. Validar estritamente a palavra-passe da conta encontrada
-  if (matched.password) {
-    if (passTerm !== matched.password) {
-      throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
-    }
-  } else {
-    // Caso seja uma conta antiga do Firestore sem campo password local, validar via Firebase Auth
-    let firebaseValid = false;
-    if (matched.email) {
-      try {
-        await signInWithEmailAndPassword(auth, matched.email, passTerm);
-        firebaseValid = true;
-      } catch {
-        firebaseValid = false;
+  // 5. Validar estritamente a palavra-passe da conta encontrada (ou confirmar Firebase Auth)
+  if (!authenticatedViaFirebase) {
+    if (matched.password) {
+      if (passTerm !== matched.password) {
+        throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
       }
+    } else {
+      let firebaseValid = false;
+      if (matched.email) {
+        try {
+          await signInWithEmailAndPassword(auth, matched.email, passTerm);
+          firebaseValid = true;
+          authenticatedViaFirebase = true;
+        } catch {
+          firebaseValid = false;
+        }
+      }
+      if (!firebaseValid) {
+        throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
+      }
+      matched.password = passTerm;
     }
-    if (!firebaseValid) {
-      throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
+  }
+
+  // Refrescar dados/role a partir do documento Cloud Firestore do utilizador se autenticado
+  if (matched.email && !authenticatedViaFirebase) {
+    try {
+      await signInWithEmailAndPassword(auth, matched.email, passTerm);
+      authenticatedViaFirebase = true;
+    } catch {
+      // safe fallback
     }
-    matched.password = passTerm;
+  }
+  if (authenticatedViaFirebase && auth.currentUser) {
+    try {
+      const freshSnap = await getDoc(doc(firestore, 'users', auth.currentUser.uid));
+      if (freshSnap.exists()) {
+        matched = normalizeUserFromDoc(freshSnap.id, freshSnap.data(), matched);
+      }
+    } catch {}
   }
 
   // 6. Bloquear entrada se a conta ainda estiver em revisão ou tiver sido rejeitada pelo Administrador
@@ -1364,13 +2284,11 @@ export async function loginUser(identifier: string, password?: string): Promise<
   memoryUsers = [activeMatched, ...memoryUsers.filter(u => u && u.id !== activeMatched.id)];
   backupToStorage(DB_KEYS.USERS, memoryUsers);
 
-  if (activeMatched.email) {
-    signInWithEmailAndPassword(auth, activeMatched.email, passTerm).catch(() => {});
-  }
   return setCurrentUser(activeMatched);
 }
 
 export function approveKYC(userId: string): User {
+  assertAdminCaller();
   const idx = memoryUsers.findIndex(u => u && u.id === userId);
   const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
   if (!baseUser) throw new Error('Utilizador não encontrado');
@@ -1451,6 +2369,7 @@ export function approveKYC(userId: string): User {
 }
 
 export function rejectKYC(userId: string, reason: string): User {
+  assertAdminCaller();
   const idx = memoryUsers.findIndex(u => u && u.id === userId);
   const baseUser = idx !== -1 ? memoryUsers[idx] : getUsers().find(u => u && u.id === userId);
   if (!baseUser) throw new Error('Utilizador não encontrado');
@@ -1530,13 +2449,9 @@ export function getPendingKYCUsers(): User[] {
 
 function assertAdminCaller(): void {
   const caller = getCurrentUser();
-  const isAdmin =
-    !!caller &&
-    (caller.role === 'admin' ||
-      caller.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-      caller.id === 'usr_admin');
+  const isAdmin = isAdminUserRecord(caller);
   if (!isAdmin) {
-    throw new Error('Apenas o Administrador tem permissão para suspender, reativar ou eliminar contas de utilizadores.');
+    throw new Error('Acesso negado: apenas administradores autorizados podem executar esta operação.');
   }
 }
 
@@ -1664,7 +2579,7 @@ export function deleteUserAccount(userId: string): void {
     id: userId,
     deletedAt: new Date().toISOString()
   };
-  void pushDocToServer('deleted_users', userId, delMarker, true);
+  void writeDocToFirestore('deleted_users', userId, delMarker, true).catch(() => {});
   void deleteDocOnServer('users', userId);
   void deleteDocOnServer('wallets', userId);
   removedListingIds.forEach(listingId => {
@@ -1825,6 +2740,7 @@ export function adjustUserBalance(
   reason: string,
   adminId: string = 'kt5dFLArJzV7hCNMQ3ZvgqFokM62'
 ): { wallet: Wallet; transaction: Transaction } {
+  assertAdminCaller();
   const users = getUsers();
   const user = users.find(u => u && u.id === userId);
   if (!user) throw new Error('Utilizador não encontrado');
@@ -1957,19 +2873,14 @@ export function requestDeposit(
   );
 
   dispatchDbChange();
-  writeDocToFirestore('deposits', newDeposit.id, newDeposit, false).catch(err => {
-    const msg = String(err?.message || err?.code || '').toLowerCase();
-    if (msg.includes('invalid-argument') || msg.includes('size') || msg.includes('exceeds') || msg.includes('longer')) {
-      const { receiptProof: _bigProof, ...lightweight } = newDeposit;
-      writeDocToFirestore('deposits', newDeposit.id, { ...lightweight, receiptProof: '' }, true).catch(() => {});
-    }
-  });
+  writeDocToFirestore('deposits', newDeposit.id, newDeposit, false).catch(() => {});
   writeDocToFirestore('transactions', pendingTx.id, pendingTx, false).catch(() => {});
 
   return newDeposit;
 }
 
 export function approveDeposit(depositId: string): DepositRequest {
+  assertAdminCaller();
   const idx = memoryDeposits.findIndex(d => d.id === depositId);
   if (idx === -1) throw new Error('Pedido de carregamento não encontrado');
   const existingDeposit = memoryDeposits[idx];
@@ -2036,6 +2947,7 @@ export function approveDeposit(depositId: string): DepositRequest {
 }
 
 export function rejectDeposit(depositId: string, reason?: string): DepositRequest {
+  assertAdminCaller();
   const idx = memoryDeposits.findIndex(d => d.id === depositId);
   if (idx === -1) throw new Error('Pedido de carregamento não encontrado');
   const existingDeposit = memoryDeposits[idx];
@@ -2097,7 +3009,7 @@ export function rejectDeposit(depositId: string, reason?: string): DepositReques
   return deposit;
 }
 
-export const MIN_WITHDRAWAL_AMOUNT = 2000;
+export const MIN_WITHDRAWAL_AMOUNT = 0;
 
 export function requestWithdrawal(
   userId: string,
@@ -2107,18 +3019,15 @@ export function requestWithdrawal(
   accountHolder?: string
 ): WithdrawalRequest {
   const numericAmount = Number(amount);
-  if (!numericAmount || isNaN(numericAmount) || numericAmount <= 0) {
-    throw new Error('Por favor, introduz o montante que desejas sacar.');
-  }
-  if (numericAmount < MIN_WITHDRAWAL_AMOUNT) {
-    throw new Error(`O valor mínimo para saque é de ${formatMoney(MIN_WITHDRAWAL_AMOUNT)}.`);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    throw new Error('Por favor, introduz um montante maior que zero para sacar.');
   }
 
   const wallet = getWallet(userId);
   const reservedSum = getPendingReservedAmount(userId);
   const withdrawableBalance = Math.max(0, wallet.availableBalance - reservedSum);
 
-  if (numericAmount > withdrawableBalance) {
+  if (Math.round(numericAmount * 100) > Math.round(withdrawableBalance * 100)) {
     if (reservedSum > 0 && numericAmount <= wallet.availableBalance) {
       throw new Error(
         `Já tens ${formatMoney(reservedSum)} em movimentos pendentes de aprovação pelo Administrador. Podes movimentar até ${formatMoney(withdrawableBalance)}.`
@@ -2182,6 +3091,7 @@ export function processWithdrawal(
   status: 'processado' | 'rejeitado',
   reason?: string
 ): WithdrawalRequest {
+  assertAdminCaller();
   const idx = memoryWithdrawals.findIndex(w => w.id === withdrawalId);
   if (idx === -1) throw new Error('Pedido de levantamento não encontrado');
   const existingWth = memoryWithdrawals[idx];
@@ -2295,8 +3205,8 @@ export function getAllResaleListings(): ResaleListing[] {
   const base = memoryResaleListings.length > 0 ? memoryResaleListings : INITIAL_RESALE_LISTINGS;
   return base.map(l => ({
     ...l,
-    listingPrice: Math.max(5000, Math.min(450000, Number(l.listingPrice) || 5000)),
-    originalPrice: Math.max(5000, Math.min(450000, Number(l.originalPrice) || 5000))
+    listingPrice: Number(l.listingPrice) > 0 ? Number(l.listingPrice) : 5000,
+    originalPrice: Number(l.originalPrice) > 0 ? Number(l.originalPrice) : 5000
   }));
 }
 
@@ -2312,6 +3222,10 @@ export function createResaleListing(
   minAcceptablePrice = 0,
   allowNegotiation = true
 ): ResaleListing {
+  const numericListingPrice = Number(listingPrice);
+  if (!Number.isFinite(numericListingPrice) || numericListingPrice <= 0) {
+    throw new Error('O preço de revenda deve ser maior que zero.');
+  }
   const upIdx = memoryUserProducts.findIndex(
     up => up.id === userProductId && up.currentOwnerId === sellerId
   );
@@ -2336,8 +3250,8 @@ export function createResaleListing(
     productName: userProd.productName,
     category: userProd.category,
     originalPrice: userProd.originalPrice,
-    listingPrice,
-    minAcceptablePrice: minAcceptablePrice || Math.round(listingPrice * 0.8),
+    listingPrice: numericListingPrice,
+    minAcceptablePrice: minAcceptablePrice > 0 ? minAcceptablePrice : Math.round(numericListingPrice * 0.8),
     customDescription: customDescription || userProd.productName,
     allowNegotiation,
     status: isAdmin ? 'ativo' : 'pendente',
@@ -2372,6 +3286,7 @@ export function createResaleListing(
 }
 
 export function approveResaleListing(listingId: string): ResaleListing {
+  assertAdminCaller();
   const listIdx = memoryResaleListings.findIndex(l => l.id === listingId);
   if (listIdx === -1) throw new Error('Anúncio não encontrado');
   const existing = memoryResaleListings[listIdx];
@@ -2409,6 +3324,7 @@ export function approveResaleListing(listingId: string): ResaleListing {
 }
 
 export function rejectResaleListing(listingId: string, reason: string): ResaleListing {
+  assertAdminCaller();
   const cleanReason = (reason || '').trim();
   if (!cleanReason) {
     throw new Error('Por favor, escreve o motivo da rejeição do anúncio.');
@@ -2516,7 +3432,7 @@ function executeConfirmedResaleSettlement(
     userName: existingOrder?.buyerName || (buyerUser ? buyerUser.name : 'Comprador'),
     amount: -paidPrice,
     type: 'compra_revenda',
-    description: `Compra Aprovada no Mercado de Revenda: ${listing.productName}`,
+    description: `Compra no Mercado de Revenda: ${listing.productName}`,
     status: 'confirmada',
     reference: existingOrder?.paymentReference || `REV-${listing.id.slice(-6)}`,
     createdAt: existingOrder?.createdAt || nowIso
@@ -2542,7 +3458,7 @@ function executeConfirmedResaleSettlement(
     userName: sellerUser ? sellerUser.name : listing.sellerName || 'Vendedor',
     amount: paidPrice,
     type: 'venda_recebida',
-    description: `Venda Aprovada no Mercado de Revenda: ${listing.productName}`,
+    description: `Venda Concluída no Mercado de Revenda: ${listing.productName}`,
     status: 'confirmada',
     reference: existingOrder?.paymentReference || `REV-${listing.id.slice(-6)}`,
     createdAt: nowIso
@@ -2567,7 +3483,7 @@ function executeConfirmedResaleSettlement(
         const updatedNeg: Negotiation = {
           ...n,
           status: 'concluida',
-          statusMessage: 'Compra aprovada e concluída com sucesso!',
+          statusMessage: 'Compra concluída automaticamente com sucesso!',
           updatedAt: nowIso
         };
         writeDocToFirestore('negotiations', n.id, updatedNeg, true).catch(() => {});
@@ -2679,8 +3595,8 @@ function executeConfirmedResaleSettlement(
   if (!isAdminOrPersona) {
     createNotification(
       buyerId,
-      'Compra P2P Aprovada & Produto Entregue! 📦',
-      `A tua compra de "${listing.productName}" (${formatMoney(paidPrice)}) foi aprovada pelo Administrador e já está em "Meus Produtos".`,
+      'Compra P2P Concluída & Produto Entregue! 📦',
+      `A tua compra de "${listing.productName}" (${formatMoney(paidPrice)}) foi concluída automaticamente e já está em "Meus Produtos".`,
       'compra',
       'produto',
       newItem.id
@@ -2716,6 +3632,11 @@ export function purchaseResaleListing(
     throw new Error('Não podes comprar o teu próprio anúncio');
   }
 
+  const numericPaidPrice = Number(paidPrice);
+  if (!Number.isFinite(numericPaidPrice) || numericPaidPrice <= 0) {
+    throw new Error('Preço da compra inválido.');
+  }
+
   const buyerUser = getUsers().find(u => u.id === buyerId);
   const isAdminOrPersona =
     buyerId.startsWith('persona_') ||
@@ -2723,96 +3644,23 @@ export function purchaseResaleListing(
     buyerId === 'usr_admin' ||
     buyerUser?.role === 'admin';
 
-  if (isAdminOrPersona) {
-    const confirmed = executeConfirmedResaleSettlement(listing, buyerId, paidPrice);
-    return { id: confirmed.id, pendingApproval: false };
-  }
-
-  const wallet = getWallet(buyerId);
-  const spendable = getSpendableBalance(buyerId);
-  if (paidPrice > spendable) {
-    const reserved = getPendingReservedAmount(buyerId);
-    if (reserved > 0 && paidPrice <= wallet.availableBalance) {
-      throw new Error(
-        `Já tens ${formatMoney(reserved)} em movimentos pendentes de aprovação. O teu saldo livre atual é ${formatMoney(spendable)}.`
-      );
-    }
-    throw new Error('Saldo insuficiente na carteira para solicitar esta compra.');
-  }
-
-  const nowIso = new Date().toISOString();
-  const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const ref = `P2P-${orderId.slice(-6).toUpperCase()}`;
-
-  const pendingOrder: Order = {
-    id: orderId,
-    buyerId,
-    buyerName: buyerUser ? buyerUser.name : 'Cliente',
-    sellerId: listing.sellerId,
-    sellerName: listing.sellerName,
-    items: [
-      {
-        id: listing.userProductId,
-        productId: listing.id,
-        name: listing.productName,
-        price: paidPrice,
-        quantity: 1,
-        imageUrl: listing.imageUrl,
-        source: 'revenda',
-        userProductId: listing.userProductId,
-        sellerId: listing.sellerId,
-        selectedColor: listing.selectedColor
+  if (!isAdminOrPersona) {
+    const wallet = getWallet(buyerId);
+    const spendable = getSpendableBalance(buyerId);
+    if (numericPaidPrice > spendable) {
+      const reserved = getPendingReservedAmount(buyerId);
+      if (reserved > 0 && numericPaidPrice <= wallet.availableBalance) {
+        throw new Error(
+          `Já tens ${formatMoney(reserved)} em movimentos pendentes de aprovação. O teu saldo livre atual é ${formatMoney(spendable)}.`
+        );
       }
-    ],
-    subtotal: paidPrice,
-    shippingFee: 0,
-    totalAmount: paidPrice,
-    deliveryAddress: {
-      province: buyerUser?.province || 'Luanda',
-      city: buyerUser?.city || 'Luanda',
-      street: 'Mercado Interno BABA SHOPPING',
-      recipientName: buyerUser?.name || 'Cliente',
-      recipientPhone: buyerUser?.phone || ''
-    },
-    paymentMethod: 'carteira',
-    paymentReference: ref,
-    status: 'aguardando_aprovacao',
-    source: 'revenda',
-    createdAt: nowIso,
-    updatedAt: nowIso
-  };
+      throw new Error('Saldo insuficiente na carteira para concluir esta compra.');
+    }
+  }
 
-  memoryOrders = [pendingOrder, ...memoryOrders];
-  backupToStorage(DB_KEYS.ORDERS, memoryOrders);
-
-  const pendingTx: Transaction = {
-    id: `tx_ord_${orderId}`,
-    userId: buyerId,
-    userName: pendingOrder.buyerName,
-    amount: -paidPrice,
-    type: 'compra_revenda',
-    description: `Compra Revenda P2P: ${listing.productName} (Vendedor: ${listing.sellerName}) — Aguardando aprovação do Adm`,
-    status: 'pendente',
-    reference: ref,
-    createdAt: nowIso
-  };
-  memoryTransactions = [pendingTx, ...memoryTransactions];
-  backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
-
-  createNotification(
-    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
-    'Nova Compra P2P Pendente de Aprovação 🤝',
-    `${pendingOrder.buyerName} solicitou comprar "${listing.productName}" de ${listing.sellerName} por ${formatMoney(paidPrice)}. Aprova ou recusa no Painel do Adm.`,
-    'compra',
-    'admin',
-    orderId
-  );
-
-  dispatchDbChange();
-  writeDocToFirestore('orders', pendingOrder.id, pendingOrder, false).catch(() => {});
-  writeDocToFirestore('transactions', pendingTx.id, pendingTx, false).catch(() => {});
-
-  return { id: orderId, pendingApproval: true };
+  // Compra automática e imediata: liquida na hora e entrega diretamente em "Meus Produtos"
+  const confirmed = executeConfirmedResaleSettlement(listing, buyerId, numericPaidPrice);
+  return { id: confirmed.id, pendingApproval: false };
 }
 
 // ==========================================
@@ -2827,7 +3675,8 @@ export function purchaseOfficialProduct(
   const prod = getProducts().find(p => p.id === productId);
   if (!prod) throw new Error('Produto não encontrado');
 
-  const totalPrice = prod.officialPrice * quantity;
+  const qty = Math.max(1, Number(quantity) || 1);
+  const totalPrice = prod.officialPrice * qty;
   const wallet = getWallet(userId);
   const spendable = getSpendableBalance(userId);
 
@@ -2846,8 +3695,53 @@ export function purchaseOfficialProduct(
   const orderId = `ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const ref = `BABA-${orderId.slice(-6).toUpperCase()}`;
 
-  // NÃO debita nem entrega em Meus Produtos antes do Adm aprovar
-  const pendingOrder: Order = {
+  // Compra automática: debita saldo imediatamente e entrega o(s) artigo(s) diretamente em "Meus Produtos"
+  const updatedWallet: Wallet = {
+    ...wallet,
+    availableBalance: Math.max(0, (Number(wallet.availableBalance) || 0) - totalPrice),
+    totalSpent: (Number(wallet.totalSpent) || 0) + totalPrice,
+    updatedAt: nowIso
+  };
+  memoryWallets[userId] = updatedWallet;
+  backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+
+  const memProdIdx = memoryProducts.findIndex(p => p.id === prod.id);
+  if (memProdIdx !== -1) {
+    const nextStock = Math.max(0, (Number(memoryProducts[memProdIdx].stock) || 0) - qty);
+    const updatedProd: Product = {
+      ...memoryProducts[memProdIdx],
+      stock: nextStock,
+      status: nextStock > 0 ? 'disponivel' : 'esgotado'
+    };
+    memoryProducts[memProdIdx] = updatedProd;
+    backupToStorage(DB_KEYS.PRODUCTS, memoryProducts);
+    writeDocToFirestore('products', updatedProd.id, updatedProd, true).catch(() => {});
+  }
+
+  const resolvedColor = selectedColor || prod.selectedColor;
+  for (let i = 0; i < qty; i++) {
+    const newItem: UserProduct = {
+      id: `up_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 5)}`,
+      originalProductId: prod.id,
+      currentOwnerId: userId,
+      productName: prod.name,
+      category: prod.category || 'produtos_variados',
+      originalPrice: prod.officialPrice,
+      purchasePrice: prod.officialPrice,
+      productImage: prod.imageUrl,
+      purchaseDate: nowIso,
+      status: 'disponivel',
+      type: prod.type || 'fisico',
+      condition: 'novo',
+      selectedColor: resolvedColor,
+      serialNumber: `SN-OFF-${Date.now()}-${i}`
+    };
+    memoryUserProducts = [newItem, ...memoryUserProducts];
+    writeDocToFirestore('user_products', newItem.id, newItem, false).catch(() => {});
+  }
+  backupToStorage(DB_KEYS.USER_PRODUCTS, memoryUserProducts);
+
+  const confirmedOrder: Order = {
     id: orderId,
     buyerId: userId,
     buyerName: user ? user.name : 'Cliente',
@@ -2857,10 +3751,10 @@ export function purchaseOfficialProduct(
         productId: prod.id,
         name: prod.name,
         price: prod.officialPrice,
-        quantity,
+        quantity: qty,
         imageUrl: prod.imageUrl,
         source: 'oficial',
-        selectedColor: selectedColor || prod.selectedColor
+        selectedColor: resolvedColor
       }
     ],
     subtotal: totalPrice,
@@ -2875,48 +3769,50 @@ export function purchaseOfficialProduct(
     },
     paymentMethod: 'carteira',
     paymentReference: ref,
-    status: 'aguardando_aprovacao',
+    status: 'pagamento_confirmado',
     source: 'oficial',
     createdAt: nowIso,
     updatedAt: nowIso
   };
 
-  memoryOrders = [pendingOrder, ...memoryOrders];
+  memoryOrders = [confirmedOrder, ...memoryOrders];
   backupToStorage(DB_KEYS.ORDERS, memoryOrders);
 
-  const pendingTx: Transaction = {
+  const confirmedTx: Transaction = {
     id: `tx_ord_${orderId}`,
     userId,
-    userName: pendingOrder.buyerName,
+    userName: confirmedOrder.buyerName,
     amount: -totalPrice,
     type: 'compra_oficial',
-    description: `Compra Oficial (${quantity}x ${prod.name}) — Aguardando aprovação do Adm`,
-    status: 'pendente',
+    description: `Compra Oficial Concluída & Entregue (${qty}x ${prod.name})`,
+    status: 'confirmada',
     reference: ref,
     createdAt: nowIso
   };
 
-  memoryTransactions = [pendingTx, ...memoryTransactions];
+  memoryTransactions = [confirmedTx, ...memoryTransactions];
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
   createNotification(
-    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
-    'Nova Compra Oficial Pendente de Aprovação 🛒',
-    `${pendingOrder.buyerName} solicitou a compra de ${quantity}x "${prod.name}" (${formatMoney(totalPrice)}). Aprova ou recusa no Painel do Adm.`,
+    userId,
+    'Compra Concluída & Produto Entregue! 📦',
+    `A tua compra de ${qty}x "${prod.name}" (${formatMoney(totalPrice)}) foi confirmada automaticamente e já está em "Meus Produtos" pronta para revenda!`,
     'compra',
-    'admin',
+    'produto',
     orderId
   );
 
   dispatchDbChange();
 
-  writeDocToFirestore('orders', pendingOrder.id, pendingOrder, false).catch(() => {});
-  writeDocToFirestore('transactions', pendingTx.id, pendingTx, false).catch(() => {});
+  writeDocToFirestore('wallets', userId, updatedWallet, true).catch(() => {});
+  writeDocToFirestore('orders', confirmedOrder.id, confirmedOrder, false).catch(() => {});
+  writeDocToFirestore('transactions', confirmedTx.id, confirmedTx, false).catch(() => {});
 
-  return { order: { id: orderId, pendingApproval: true } };
+  return { order: { id: orderId, pendingApproval: false } };
 }
 
 export function approveOrder(orderId: string): Order {
+  assertAdminCaller();
   const idx = memoryOrders.findIndex(o => o.id === orderId);
   if (idx === -1) throw new Error('Pedido de compra não encontrado');
   const existingOrder = memoryOrders[idx];
@@ -3030,6 +3926,7 @@ export function approveOrder(orderId: string): Order {
 }
 
 export function rejectOrder(orderId: string, reason: string): Order {
+  assertAdminCaller();
   const cleanReason = (reason || '').trim();
   if (!cleanReason) {
     throw new Error('Por favor, escreve o motivo da rejeição do pedido.');
@@ -3200,6 +4097,7 @@ export function createNegotiation(
 }
 
 export function approveNegotiationProposal(negotiationId: string): Negotiation {
+  assertAdminCaller();
   const idx = memoryNegotiations.findIndex(n => n.id === negotiationId);
   if (idx === -1) throw new Error('Proposta de negociação não encontrada');
   const existing = memoryNegotiations[idx];
@@ -3239,6 +4137,7 @@ export function approveNegotiationProposal(negotiationId: string): Negotiation {
 }
 
 export function rejectNegotiationProposal(negotiationId: string, reason: string): Negotiation {
+  assertAdminCaller();
   const cleanReason = (reason || '').trim();
   if (!cleanReason) {
     throw new Error('Por favor, escreve o motivo da rejeição da proposta.');
@@ -3600,6 +4499,7 @@ export function getOrders(userId?: string): Order[] {
 }
 
 export function updateOrderStatus(orderId: string, status: OrderStatus): any {
+  assertAdminCaller();
   const idx = memoryOrders.findIndex(o => o.id === orderId);
   if (idx === -1) return { id: orderId, status };
   const updated: Order = {
@@ -3753,6 +4653,7 @@ export function adminReplyAssistantConversation(
   text: string,
   nextStatus?: AssistantConversation['status']
 ): AssistantConversation {
+  assertAdminCaller();
   const idx = memoryAssistantConversations.findIndex(c => c && c.id === conversationId);
   if (idx === -1) throw new Error('Conversa de atendimento não encontrada.');
   const cleanText = text.trim();
@@ -3803,6 +4704,7 @@ export function adminUpdateAssistantStatus(
   conversationId: string,
   status: AssistantConversation['status']
 ): AssistantConversation {
+  assertAdminCaller();
   const idx = memoryAssistantConversations.findIndex(c => c && c.id === conversationId);
   if (idx === -1) throw new Error('Conversa não encontrada.');
   const nowIso = new Date().toISOString();
@@ -3839,6 +4741,304 @@ export function markAssistantConversationRead(
   backupToStorage(DB_KEYS.ASSISTANT_CONVERSATIONS, memoryAssistantConversations);
   dispatchDbChange();
   writeDocToFirestore('assistant_conversations', conversationId, updated, true).catch(() => {});
+}
+
+// ==========================================
+// FUNÇÕES ASSÍNCRONAS ADM COM PERSISTÊNCIA RIGOROSA NO CLOUD FIRESTORE
+// ==========================================
+export async function approveKYCAsync(userId: string): Promise<User> {
+  assertAdminCaller();
+  const prevUser = memoryUsers.find(u => u && u.id === userId);
+  const prevWallets = { ...memoryWallets };
+  const prevTxs = [...memoryTransactions];
+
+  const updated = approveKYC(userId);
+  try {
+    await persistDocToFirestoreStrict(
+      'users',
+      userId,
+      {
+        accountStatus: 'ativo',
+        rejectionReason: '',
+        referralRewardPaid: Boolean(updated.referralRewardPaid),
+        verifiedAt: updated.verifiedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      true
+    );
+    if (updated.referredBy && updated.referralRewardPaid && !prevUser?.referralRewardPaid) {
+      const refNorm = updated.referredBy.trim().toUpperCase();
+      const inviter = getUsers().find(
+        u => u && u.id !== userId && (getUserInviteCode(u).toUpperCase() === refNorm || u.id.toUpperCase() === refNorm)
+      );
+      if (inviter && memoryWallets[inviter.id]) {
+        await persistDocToFirestoreStrict('wallets', inviter.id, memoryWallets[inviter.id], true);
+      }
+    }
+    return updated;
+  } catch (err) {
+    if (prevUser) {
+      memoryUsers = memoryUsers.map(u => (u && u.id === userId ? prevUser : u));
+      backupToStorage(DB_KEYS.USERS, memoryUsers);
+    }
+    memoryWallets = prevWallets;
+    memoryTransactions = prevTxs;
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+    dispatchDbChange();
+    throw err;
+  }
+}
+
+export async function rejectKYCAsync(userId: string, reason: string): Promise<User> {
+  assertAdminCaller();
+  const prevUser = memoryUsers.find(u => u && u.id === userId);
+  const updated = rejectKYC(userId, reason);
+  try {
+    await persistDocToFirestoreStrict(
+      'users',
+      userId,
+      {
+        accountStatus: 'rejeitado',
+        rejectionReason: updated.rejectionReason || reason,
+        updatedAt: new Date().toISOString()
+      },
+      true
+    );
+    return updated;
+  } catch (err) {
+    if (prevUser) {
+      memoryUsers = memoryUsers.map(u => (u && u.id === userId ? prevUser : u));
+      backupToStorage(DB_KEYS.USERS, memoryUsers);
+      dispatchDbChange();
+    }
+    throw err;
+  }
+}
+
+export async function approveDepositAsync(depositId: string): Promise<DepositRequest> {
+  assertAdminCaller();
+  const prevDep = memoryDeposits.find(d => d && d.id === depositId);
+  const prevWallets = { ...memoryWallets };
+  const prevTxs = [...memoryTransactions];
+
+  const deposit = approveDeposit(depositId);
+  const wallet = memoryWallets[deposit.userId];
+  const tx = memoryTransactions.find(t => t.id === `tx_dep_${depositId}`);
+  try {
+    await persistDocToFirestoreStrict(
+      'deposits',
+      depositId,
+      {
+        status: 'aprovado',
+        rejectionReason: '',
+        updatedAt: new Date().toISOString()
+      },
+      true
+    );
+    if (wallet) {
+      await persistDocToFirestoreStrict('wallets', deposit.userId, wallet, true);
+    }
+    if (tx) {
+      await persistDocToFirestoreStrict('transactions', tx.id, tx, true);
+    }
+    return deposit;
+  } catch (err) {
+    if (prevDep) {
+      memoryDeposits = memoryDeposits.map(d => (d && d.id === depositId ? prevDep : d));
+      backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+    }
+    memoryWallets = prevWallets;
+    memoryTransactions = prevTxs;
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+    dispatchDbChange();
+    throw err;
+  }
+}
+
+export async function rejectDepositAsync(depositId: string, reason?: string): Promise<DepositRequest> {
+  assertAdminCaller();
+  const prevDep = memoryDeposits.find(d => d && d.id === depositId);
+  const prevTxs = [...memoryTransactions];
+
+  const deposit = rejectDeposit(depositId, reason);
+  const tx = memoryTransactions.find(t => t.id === `tx_dep_${depositId}`);
+  try {
+    await persistDocToFirestoreStrict(
+      'deposits',
+      depositId,
+      {
+        status: 'rejeitado',
+        ...(deposit.rejectionReason ? { rejectionReason: deposit.rejectionReason } : {}),
+        updatedAt: new Date().toISOString()
+      },
+      true
+    );
+    if (tx) {
+      await persistDocToFirestoreStrict('transactions', tx.id, tx, true);
+    }
+    return deposit;
+  } catch (err) {
+    if (prevDep) {
+      memoryDeposits = memoryDeposits.map(d => (d && d.id === depositId ? prevDep : d));
+      backupToStorage(DB_KEYS.DEPOSITS, memoryDeposits);
+    }
+    memoryTransactions = prevTxs;
+    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+    dispatchDbChange();
+    throw err;
+  }
+}
+
+export async function processWithdrawalAsync(
+  withdrawalId: string,
+  status: 'processado' | 'rejeitado',
+  reason?: string
+): Promise<WithdrawalRequest> {
+  assertAdminCaller();
+  const prevWth = memoryWithdrawals.find(w => w && w.id === withdrawalId);
+  const prevWallets = { ...memoryWallets };
+  const prevTxs = [...memoryTransactions];
+
+  const wth = processWithdrawal(withdrawalId, status, reason);
+  const wallet = memoryWallets[wth.userId];
+  const tx = memoryTransactions.find(t => t.id === `tx_wth_${withdrawalId}`);
+  try {
+    await persistDocToFirestoreStrict(
+      'withdrawals',
+      withdrawalId,
+      {
+        status,
+        ...(status === 'rejeitado' && wth.rejectionReason ? { rejectionReason: wth.rejectionReason } : { rejectionReason: '' }),
+        updatedAt: new Date().toISOString()
+      },
+      true
+    );
+    if (wallet) {
+      await persistDocToFirestoreStrict('wallets', wth.userId, wallet, true);
+    }
+    if (tx) {
+      await persistDocToFirestoreStrict('transactions', tx.id, tx, true);
+    }
+    return wth;
+  } catch (err) {
+    if (prevWth) {
+      memoryWithdrawals = memoryWithdrawals.map(w => (w && w.id === withdrawalId ? prevWth : w));
+      backupToStorage(DB_KEYS.WITHDRAWALS, memoryWithdrawals);
+    }
+    memoryWallets = prevWallets;
+    memoryTransactions = prevTxs;
+    backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+    backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
+    dispatchDbChange();
+    throw err;
+  }
+}
+
+export async function approveOrderAsync(orderId: string): Promise<Order> {
+  assertAdminCaller();
+  const prevOrd = memoryOrders.find(o => o && o.id === orderId);
+  const order = approveOrder(orderId);
+  try {
+    await persistDocToFirestoreStrict('orders', orderId, order, true);
+    if (memoryWallets[order.buyerId]) {
+      await persistDocToFirestoreStrict('wallets', order.buyerId, memoryWallets[order.buyerId], true);
+    }
+    return order;
+  } catch (err) {
+    if (prevOrd) {
+      memoryOrders = memoryOrders.map(o => (o && o.id === orderId ? prevOrd : o));
+      backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+      dispatchDbChange();
+    }
+    throw err;
+  }
+}
+
+export async function rejectOrderAsync(orderId: string, reason: string): Promise<Order> {
+  assertAdminCaller();
+  const prevOrd = memoryOrders.find(o => o && o.id === orderId);
+  const order = rejectOrder(orderId, reason);
+  try {
+    await persistDocToFirestoreStrict('orders', orderId, order, true);
+    return order;
+  } catch (err) {
+    if (prevOrd) {
+      memoryOrders = memoryOrders.map(o => (o && o.id === orderId ? prevOrd : o));
+      backupToStorage(DB_KEYS.ORDERS, memoryOrders);
+      dispatchDbChange();
+    }
+    throw err;
+  }
+}
+
+export async function approveResaleListingAsync(listingId: string): Promise<ResaleListing> {
+  assertAdminCaller();
+  const prevLst = memoryResaleListings.find(l => l && l.id === listingId);
+  const listing = approveResaleListing(listingId);
+  try {
+    await persistDocToFirestoreStrict('resale_listings', listingId, listing, true);
+    return listing;
+  } catch (err) {
+    if (prevLst) {
+      memoryResaleListings = memoryResaleListings.map(l => (l && l.id === listingId ? prevLst : l));
+      backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+      dispatchDbChange();
+    }
+    throw err;
+  }
+}
+
+export async function rejectResaleListingAsync(listingId: string, reason: string): Promise<ResaleListing> {
+  assertAdminCaller();
+  const prevLst = memoryResaleListings.find(l => l && l.id === listingId);
+  const listing = rejectResaleListing(listingId, reason);
+  try {
+    await persistDocToFirestoreStrict('resale_listings', listingId, listing, true);
+    return listing;
+  } catch (err) {
+    if (prevLst) {
+      memoryResaleListings = memoryResaleListings.map(l => (l && l.id === listingId ? prevLst : l));
+      backupToStorage(DB_KEYS.RESALE_LISTINGS, memoryResaleListings);
+      dispatchDbChange();
+    }
+    throw err;
+  }
+}
+
+export async function approveNegotiationProposalAsync(negotiationId: string): Promise<Negotiation> {
+  assertAdminCaller();
+  const prevNeg = memoryNegotiations.find(n => n && n.id === negotiationId);
+  const neg = approveNegotiationProposal(negotiationId);
+  try {
+    await persistDocToFirestoreStrict('negotiations', negotiationId, neg, true);
+    return neg;
+  } catch (err) {
+    if (prevNeg) {
+      memoryNegotiations = memoryNegotiations.map(n => (n && n.id === negotiationId ? prevNeg : n));
+      backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+      dispatchDbChange();
+    }
+    throw err;
+  }
+}
+
+export async function rejectNegotiationProposalAsync(negotiationId: string, reason: string): Promise<Negotiation> {
+  assertAdminCaller();
+  const prevNeg = memoryNegotiations.find(n => n && n.id === negotiationId);
+  const neg = rejectNegotiationProposal(negotiationId, reason);
+  try {
+    await persistDocToFirestoreStrict('negotiations', negotiationId, neg, true);
+    return neg;
+  } catch (err) {
+    if (prevNeg) {
+      memoryNegotiations = memoryNegotiations.map(n => (n && n.id === negotiationId ? prevNeg : n));
+      backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
+      dispatchDbChange();
+    }
+    throw err;
+  }
 }
 
 export {
