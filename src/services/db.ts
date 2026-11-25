@@ -201,13 +201,27 @@ export function toIsoTimestamp(val: any): string {
   return String(val);
 }
 
-export function isAdminUserRecord(u?: Partial<User> | null): boolean {
+export const ADMIN_UID = 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2';
+
+const LEGACY_REMOVED_ADMIN_IDS = new Set([
+  'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+  'usr_admin'
+]);
+
+function isLegacyRemovedAdmin(u?: { id?: string; email?: string } | null): boolean {
   if (!u) return false;
+  const id = String(u.id || '').trim();
+  const email = String(u.email || '').trim().toLowerCase();
   return (
-    u.role === 'admin' ||
-    u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    u.id === 'usr_admin'
+    LEGACY_REMOVED_ADMIN_IDS.has(id) ||
+    email === 'admin@baba.ao' ||
+    email === 'admin@babashopping.ao'
   );
+}
+
+export function isAdminUserRecord(u?: Partial<User> | null): boolean {
+  if (!u || isLegacyRemovedAdmin(u)) return false;
+  return u.role === 'admin' || u.id === ADMIN_UID;
 }
 
 function normalizeDepositStatus(raw: any): DepositRequest['status'] {
@@ -273,7 +287,7 @@ function normalizeWithdrawalFromDoc(docId: string, raw: any): WithdrawalRequest 
 
 function normalizeUserFromDoc(docId: string, raw: any, localMatch?: User): User {
   const id = String(raw?.id || docId);
-  const isMaster = id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+  const isMaster = id === ADMIN_UID;
   const role: User['role'] = isMaster || raw?.role === 'admin' ? 'admin' : 'client';
   const createdAt = toIsoTimestamp(raw?.createdAt) || localMatch?.createdAt || new Date().toISOString();
   const verifiedAt = toIsoTimestamp(raw?.verifiedAt) || localMatch?.verifiedAt;
@@ -281,16 +295,16 @@ function normalizeUserFromDoc(docId: string, raw: any, localMatch?: User): User 
     ...(localMatch || {}),
     ...raw,
     id,
-    name: String(raw?.name || localMatch?.name || 'Utilizador BABA'),
+    name: String(raw?.name || localMatch?.name || (isMaster ? 'Administrador BABA' : 'Utilizador BABA')),
     email: String(raw?.email || localMatch?.email || ''),
-    phone: isMaster ? '+244 932 200 719' : String(raw?.phone || localMatch?.phone || ''),
+    phone: String(raw?.phone || localMatch?.phone || ''),
     province: String(raw?.province || localMatch?.province || 'Luanda'),
     city: String(raw?.city || localMatch?.city || 'Luanda'),
     role,
     idNumber: String(raw?.idNumber || localMatch?.idNumber || ''),
     birthDate: String(raw?.birthDate || localMatch?.birthDate || ''),
     accountStatus: normalizeAccountStatus(raw?.accountStatus ?? localMatch?.accountStatus, isMaster || role === 'admin'),
-    ...(isMaster ? { password: 'Adelina25' } : localMatch?.password && !raw?.password ? { password: localMatch.password } : {}),
+    ...(localMatch?.password && !raw?.password ? { password: localMatch.password } : {}),
     idCardFront: raw?.idCardFront || localMatch?.idCardFront || '',
     idCardBack: raw?.idCardBack || localMatch?.idCardBack || '',
     ...(verifiedAt ? { verifiedAt } : {}),
@@ -760,7 +774,7 @@ function applyLocalAdminOnlyResetOnce(): void {
     localStorage.setItem(DB_KEYS.ORDERS, JSON.stringify([]));
 
     const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
-    if (currentId && currentId !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
+    if (currentId && currentId !== ADMIN_UID) {
       localStorage.removeItem(DB_KEYS.CURRENT_USER_ID);
       localStorage.removeItem('baba_current_user_obj');
     }
@@ -772,13 +786,39 @@ function applyLocalAdminOnlyResetOnce(): void {
 
 applyLocalAdminOnlyResetOnce();
 
+function evictLegacyAdminSession(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const currentId = localStorage.getItem(DB_KEYS.CURRENT_USER_ID);
+    const rawUserObj = localStorage.getItem('baba_current_user_obj');
+    let parsedObj: any = null;
+    try {
+      parsedObj = rawUserObj ? JSON.parse(rawUserObj) : null;
+    } catch {}
+    if (
+      (currentId && LEGACY_REMOVED_ADMIN_IDS.has(currentId)) ||
+      (parsedObj && isLegacyRemovedAdmin(parsedObj))
+    ) {
+      localStorage.removeItem(DB_KEYS.CURRENT_USER_ID);
+      localStorage.removeItem('baba_current_user_obj');
+    }
+  } catch {
+    // storage safe
+  }
+}
+
+evictLegacyAdminSession();
+
 // Initial hydration from backup storage for 0ms initial render
 memoryProducts = loadFromStorage(DB_KEYS.PRODUCTS, INITIAL_PRODUCTS);
 memoryDeletedUserIds = loadFromStorage(DB_KEYS.DELETED_USERS, []);
 memoryUsers = loadFromStorage(DB_KEYS.USERS, INITIAL_USERS).filter(
-  (u: User) => u && !memoryDeletedUserIds.includes(u.id)
+  (u: User) => u && !isLegacyRemovedAdmin(u) && !memoryDeletedUserIds.includes(u.id)
 );
 memoryWallets = loadFromStorage(DB_KEYS.WALLETS, INITIAL_WALLETS);
+LEGACY_REMOVED_ADMIN_IDS.forEach(oldId => {
+  if (memoryWallets[oldId]) delete memoryWallets[oldId];
+});
 memoryTransactions = loadFromStorage(DB_KEYS.TRANSACTIONS, INITIAL_TRANSACTIONS);
 memoryUserProducts = loadFromStorage(DB_KEYS.USER_PRODUCTS, []);
 memoryResaleListings = loadFromStorage(DB_KEYS.RESALE_LISTINGS, INITIAL_RESALE_LISTINGS);
@@ -840,7 +880,7 @@ function applyServerDocUpdate(colName: string, id: string, docData: any): void {
   if (isPendingWrite(colName, id)) return;
 
   if (colName === 'deleted_users') {
-    if (id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && id !== 'usr_admin' && !memoryDeletedUserIds.includes(id)) {
+    if (id !== ADMIN_UID && !memoryDeletedUserIds.includes(id)) {
       memoryDeletedUserIds = [...memoryDeletedUserIds, id];
       backupToStorage(DB_KEYS.DELETED_USERS, memoryDeletedUserIds);
       memoryUsers = memoryUsers.filter(u => u && u.id !== id);
@@ -851,15 +891,17 @@ function applyServerDocUpdate(colName: string, id: string, docData: any): void {
   }
 
   if (colName === 'users') {
-    const isMaster = id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+    if (isLegacyRemovedAdmin({ id, email: docData?.email })) return;
+    const isMaster = id === ADMIN_UID;
     if (!isMaster && memoryDeletedUserIds.includes(id)) return;
     const localMatch = memoryUsers.find(u => u && u.id === id);
     const nextUser: User = {
       ...docData,
       id,
-      accountStatus: isMaster ? 'ativo' : (docData.accountStatus || localMatch?.accountStatus || 'em_processamento'),
-      phone: isMaster ? '+244 932 200 719' : (docData.phone || localMatch?.phone || '+244 923 000 001'),
-      password: isMaster ? 'Adelina25' : (docData.password || localMatch?.password),
+      role: isMaster || docData.role === 'admin' ? 'admin' : 'client',
+      accountStatus: isMaster || docData.role === 'admin' ? 'ativo' : (docData.accountStatus || localMatch?.accountStatus || 'em_processamento'),
+      phone: docData.phone || localMatch?.phone || '',
+      password: docData.password || localMatch?.password,
       idCardFront: docData.idCardFront || localMatch?.idCardFront || '',
       idCardBack: docData.idCardBack || localMatch?.idCardBack || ''
     };
@@ -1005,7 +1047,7 @@ async function syncFromSharedServer(forceFull = false): Promise<boolean> {
         const deletedSet = new Set<string>(memoryDeletedUserIds);
         deletedDocs.forEach(d => {
           const uid = d.id || (d.data() as any)?.id;
-          if (uid && uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && uid !== 'usr_admin') {
+          if (uid && uid !== ADMIN_UID) {
             deletedSet.add(uid);
           }
         });
@@ -1155,7 +1197,8 @@ async function syncFromSharedServer(forceFull = false): Promise<boolean> {
           const u = d.data() as User;
           if (!u) return;
           const uid = d.id || u.id;
-          const isMaster = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+          if (isLegacyRemovedAdmin({ id: uid, email: u.email })) return;
+          const isMaster = uid === ADMIN_UID;
           if (!isMaster && memoryDeletedUserIds.includes(uid)) return;
           const localMatch = localById.get(uid);
           seenIds.add(uid);
@@ -1166,15 +1209,16 @@ async function syncFromSharedServer(forceFull = false): Promise<boolean> {
           mergedUsers.push({
             ...u,
             id: uid,
-            accountStatus: isMaster ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
-            phone: isMaster ? '+244 932 200 719' : (u.phone || localMatch?.phone || '+244 923 000 001'),
-            password: isMaster ? 'Adelina25' : (u.password || localMatch?.password),
+            role: isMaster || u.role === 'admin' ? 'admin' : 'client',
+            accountStatus: isMaster || u.role === 'admin' ? 'ativo' : (u.accountStatus || localMatch?.accountStatus || 'em_processamento'),
+            phone: u.phone || localMatch?.phone || '',
+            password: u.password || localMatch?.password,
             idCardFront: u.idCardFront || localMatch?.idCardFront || '',
             idCardBack: u.idCardBack || localMatch?.idCardBack || ''
           });
         });
         memoryUsers.forEach(lu => {
-          if (lu?.id && !seenIds.has(lu.id) && isPendingWrite('users', lu.id) && !memoryDeletedUserIds.includes(lu.id)) {
+          if (lu?.id && !isLegacyRemovedAdmin(lu) && !seenIds.has(lu.id) && isPendingWrite('users', lu.id) && !memoryDeletedUserIds.includes(lu.id)) {
             mergedUsers.unshift(lu);
           }
         });
@@ -1191,7 +1235,8 @@ async function syncFromSharedServer(forceFull = false): Promise<boolean> {
           const w = d.data() as Wallet;
           if (!w) return;
           const uid = d.id || w.userId;
-          if (uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && memoryDeletedUserIds.includes(uid)) return;
+          if (LEGACY_REMOVED_ADMIN_IDS.has(uid)) return;
+          if (uid !== ADMIN_UID && memoryDeletedUserIds.includes(uid)) return;
           if (isPendingWrite('wallets', uid) && memoryWallets[uid]) {
             nextWallets[uid] = memoryWallets[uid];
           } else {
@@ -1451,23 +1496,25 @@ export function createProduct(productData: Omit<Product, 'id'>): Product {
 export function getUsers(): User[] {
   const map = new Map<string, User>();
   const isDeleted = (id: string) =>
-    id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
+    id !== ADMIN_UID &&
     memoryDeletedUserIds.includes(id);
 
   INITIAL_USERS.forEach(u => {
-    if (u && u.id && !isDeleted(u.id)) {
-      map.set(u.id, { ...u, phone: u.phone || '+244 923 000 001' });
+    if (u && u.id && !isLegacyRemovedAdmin(u) && !isDeleted(u.id)) {
+      map.set(u.id, { ...u });
     }
   });
   memoryUsers.forEach(u => {
-    if (u && u.id && !isDeleted(u.id)) {
-      const isMaster = u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+    if (u && u.id && !isLegacyRemovedAdmin(u) && !isDeleted(u.id)) {
+      const isMaster = u.id === ADMIN_UID;
       const initial = map.get(u.id);
       map.set(u.id, {
         ...(initial || {}),
         ...u,
-        phone: isMaster ? '+244 932 200 719' : (u.phone || initial?.phone || '+244 923 000 001'),
-        password: isMaster ? 'Adelina25' : (u.password || initial?.password)
+        role: isMaster || u.role === 'admin' ? 'admin' : 'client',
+        accountStatus: isMaster || u.role === 'admin' ? 'ativo' : (u.accountStatus || initial?.accountStatus || 'em_processamento'),
+        phone: u.phone || initial?.phone || '',
+        password: u.password || initial?.password
       });
     }
   });
@@ -1503,14 +1550,15 @@ function applyCloudSnapshotDocs(
   if (colName === 'users') {
     const map = new Map<string, User>();
     memoryUsers.forEach(u => {
-      if (u?.id && !removedFromCloud.has(u.id) && !memoryDeletedUserIds.includes(u.id)) {
+      if (u?.id && !isLegacyRemovedAdmin(u) && !removedFromCloud.has(u.id) && !memoryDeletedUserIds.includes(u.id)) {
         map.set(u.id, u);
       }
     });
     docs.forEach(({ id, data }) => {
       const uid = String(data?.id || id);
       if (!uid) return;
-      if (uid !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' && memoryDeletedUserIds.includes(uid)) return;
+      if (isLegacyRemovedAdmin({ id: uid, email: data?.email })) return;
+      if (uid !== ADMIN_UID && memoryDeletedUserIds.includes(uid)) return;
       if (isPendingWrite('users', uid) && map.has(uid)) return;
       map.set(uid, normalizeUserFromDoc(uid, data, map.get(uid)));
     });
@@ -1710,7 +1758,13 @@ export async function signInAdminFirebaseAuth(email: string, password: string): 
   }
   const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
   const uid = cred.user.uid;
-  let isAuthorizedAdmin = uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+  if (LEGACY_REMOVED_ADMIN_IDS.has(uid)) {
+    try {
+      await signOut(auth);
+    } catch {}
+    throw new Error('A conta do Administrador antigo foi removida.');
+  }
+  let isAuthorizedAdmin = uid === ADMIN_UID;
   if (!isAuthorizedAdmin) {
     try {
       const userSnap = await getDoc(doc(firestore, 'users', uid));
@@ -1764,9 +1818,8 @@ export function getCurrentUser(): User | null {
   const currentId = memoryCurrentUserId || safeStorageGet(DB_KEYS.CURRENT_USER_ID);
   if (!currentId) return null;
   if (
-    currentId !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
-    currentId !== 'usr_admin' &&
-    memoryDeletedUserIds.includes(currentId)
+    LEGACY_REMOVED_ADMIN_IDS.has(currentId) ||
+    (currentId !== ADMIN_UID && memoryDeletedUserIds.includes(currentId))
   ) {
     memoryCurrentUserId = null;
     memoryCurrentUserObj = null;
@@ -1776,7 +1829,7 @@ export function getCurrentUser(): User | null {
   }
   const users = getUsers();
   let user = users.find(u => u && (u.id === currentId || u.id?.toLowerCase() === currentId.toLowerCase()));
-  if (!user && memoryCurrentUserObj && memoryCurrentUserObj.id === currentId && !memoryDeletedUserIds.includes(currentId)) {
+  if (!user && memoryCurrentUserObj && memoryCurrentUserObj.id === currentId && !isLegacyRemovedAdmin(memoryCurrentUserObj) && !memoryDeletedUserIds.includes(currentId)) {
     user = memoryCurrentUserObj;
   }
   if (!user) {
@@ -1784,14 +1837,21 @@ export function getCurrentUser(): User | null {
       const rawCached = safeStorageGet('baba_current_user_obj');
       if (rawCached) {
         const parsed = JSON.parse(rawCached);
-        if (parsed && (parsed.id === currentId || !currentId) && !memoryDeletedUserIds.includes(parsed.id)) {
+        if (parsed && (parsed.id === currentId || !currentId) && !isLegacyRemovedAdmin(parsed) && !memoryDeletedUserIds.includes(parsed.id)) {
           user = parsed;
         }
       }
     } catch {}
   }
-  if (user && (user.role === 'admin' || user.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || user.id === 'usr_admin')) {
-    user = { ...user, accountStatus: 'ativo' };
+  if (user && isLegacyRemovedAdmin(user)) {
+    memoryCurrentUserId = null;
+    memoryCurrentUserObj = null;
+    safeStorageRemove(DB_KEYS.CURRENT_USER_ID);
+    safeStorageRemove('baba_current_user_obj');
+    return null;
+  }
+  if (user && isAdminUserRecord(user)) {
+    user = { ...user, role: 'admin', accountStatus: 'ativo' };
   }
   return user || null;
 }
@@ -1823,12 +1883,13 @@ export function setCurrentUser(userIdOrUser: string | User): User {
     }
   }
 
-  if (!user) {
+  if (!user || isLegacyRemovedAdmin(user)) {
     throw new Error('Utilizador não encontrado.');
   }
 
-  const isAdmin = user.role === 'admin' || user.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || user.id === 'usr_admin';
+  const isAdmin = isAdminUserRecord(user);
   if (isAdmin) {
+    user.role = 'admin';
     user.accountStatus = 'ativo';
   } else {
     user.accountStatus = user.accountStatus || 'em_processamento';
@@ -2012,7 +2073,7 @@ export async function registerUser(
 
   // Notificar imediatamente o Administrador sobre novo documento BI para validar
   const adminBiNotif = createNotification(
-    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    ADMIN_UID,
     'Novo Documento BI para Validar 📋',
     `${newUser.name} (${newUser.phone}) submeteu o BI ${newUser.idNumber} (${newUser.province}) e aguarda validação no Painel Adm.`,
     'sistema',
@@ -2067,60 +2128,16 @@ export async function loginUser(identifier: string, password?: string): Promise<
 
   initDatabase();
 
-  // 1. Verificar Credenciais Oficiais do Administrador (932200719 / Adelina25 ou ID Master)
-  const isMasterAdminIdentifier =
+  // 1. Rejeitar explicitamente o Administrador antigo removido
+  const isLegacyAdminAttempt =
     searchPhoneNorm === '932200719' ||
     strippedTerm === 'kt5dflarjzv7hcnmq3zvgqfokm62' ||
+    strippedTerm === 'usr_admin' ||
     term === 'admin@baba.ao' ||
     term === 'admin@babashopping.ao';
 
-  if (isMasterAdminIdentifier) {
-    if (passTerm !== 'Adelina25') {
-      throw new Error('Palavra-passe incorreta! Verifica os teus dados e tenta novamente.');
-    }
-    // Sincronizar primeiro todos os dados do servidor partilhado para ter saldo, utilizadores e movimentos exatos
-    await Promise.race([syncFromSharedServer(), new Promise<void>(res => setTimeout(res, 3500))]);
-
-    const users = getUsers();
-    const admin =
-      users.find(u => u && (u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || u.role === 'admin')) ||
-      INITIAL_USERS[0];
-    const adminUser: User = {
-      ...admin,
-      id: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
-      name: 'Administrador Master BABA',
-      email: 'admin@baba.ao',
-      phone: '+244 932 200 719',
-      password: 'Adelina25',
-      role: 'admin',
-      accountStatus: 'ativo',
-      province: 'Luanda',
-      city: 'Luanda (Sede Central)',
-      idNumber: '000000000LA001'
-    };
-    memoryUsers = [adminUser, ...memoryUsers.filter(u => u && u.id !== adminUser.id && u.id !== 'dR71uBkwU4Z8k52HyDL9TdeXdeR2')];
-    backupToStorage(DB_KEYS.USERS, memoryUsers);
-
-    if (!memoryWallets[adminUser.id]) {
-      const starterAdminWallet: Wallet = {
-        ...(INITIAL_WALLETS[adminUser.id] || {
-          userId: adminUser.id,
-          availableBalance: 50000000,
-          pendingBalance: 0,
-          reservedBalance: 0,
-          totalDeposited: 50000000,
-          totalSpent: 0,
-          totalEarned: 0,
-          totalWithdrawn: 0
-        }),
-        updatedAt: new Date().toISOString()
-      };
-      memoryWallets[adminUser.id] = starterAdminWallet;
-      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
-      writeDocToFirestore('wallets', adminUser.id, starterAdminWallet, true).catch(() => {});
-    }
-
-    return setCurrentUser(adminUser);
+  if (isLegacyAdminAttempt) {
+    throw new Error('A conta do Administrador antigo foi removida.');
   }
 
   // 2. Sincronizar utilizadores do servidor primeiro quando possível para garantir dados e estado atualizados
@@ -2131,7 +2148,7 @@ export async function loginUser(identifier: string, password?: string): Promise<
   const safeStr = (v: any) => (v !== null && v !== undefined ? String(v).trim() : '');
 
   let matched: User | undefined = users.find(u => {
-    if (!u) return false;
+    if (!u || isLegacyRemovedAdmin(u)) return false;
     const uEmail = safeStr(u.email).toLowerCase();
     const uId = safeStr(u.id);
     const uIdNum = safeStr(u.idNumber).toLowerCase();
@@ -2145,11 +2162,13 @@ export async function loginUser(identifier: string, password?: string): Promise<
   });
 
   const assertAccountApproved = async (u: User) => {
-    const isAdmin =
-      u.role === 'admin' ||
-      u.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-      u.id === 'usr_admin';
-    if (isAdmin) return;
+    if (isLegacyRemovedAdmin(u)) {
+      try {
+        await signOut(auth);
+      } catch {}
+      throw new Error('A conta do Administrador antigo foi removida.');
+    }
+    if (isAdminUserRecord(u)) return;
 
     if (memoryDeletedUserIds.includes(u.id)) {
       try {
@@ -2196,6 +2215,13 @@ export async function loginUser(identifier: string, password?: string): Promise<
       authenticatedViaFirebase = true;
       const uid = cred.user.uid;
 
+      if (LEGACY_REMOVED_ADMIN_IDS.has(uid)) {
+        try {
+          await signOut(auth);
+        } catch {}
+        throw new Error('A conta do Administrador antigo foi removida.');
+      }
+
       let fsDocData: any = null;
       let fsDocId = uid;
       try {
@@ -2214,16 +2240,20 @@ export async function loginUser(identifier: string, password?: string): Promise<
 
       if (fsDocData) {
         matched = normalizeUserFromDoc(fsDocId, fsDocData);
-      } else if (uid === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
+      } else if (uid === ADMIN_UID) {
         matched = {
           ...INITIAL_USERS[0],
           id: uid,
+          name: cred.user.displayName || 'Administrador BABA',
           email: cred.user.email || rawId,
           role: 'admin',
           accountStatus: 'ativo'
         };
       }
     } catch (authErr: any) {
+      if (authErr?.message && authErr.message.includes('Administrador antigo foi removida')) {
+        throw authErr;
+      }
       if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential') {
         throw new Error('Palavra-passe incorreta! Verifica a tua senha e tenta novamente.');
       }
@@ -2233,6 +2263,11 @@ export async function loginUser(identifier: string, password?: string): Promise<
   // Se nenhuma conta existente corresponder aos dados -> RECUSAR ENTRADA
   if (!matched) {
     throw new Error('Conta não encontrada! Verifica o teu telefone/email ou cria uma nova conta primeiro.');
+  }
+
+  // Se alguém entrou apenas com o UID do Administrador antes do primeiro login com email no dispositivo
+  if (matched.id === ADMIN_UID && !matched.password && !matched.email && !authenticatedViaFirebase) {
+    throw new Error('Para iniciar sessão com esta conta de Administrador, entra com o email e a palavra-passe da conta ABcb3DyaZGMapMxuQ0KqYQdPnqT2.');
   }
 
   // 5. Validar estritamente a palavra-passe da conta encontrada (ou confirmar Firebase Auth)
@@ -2275,6 +2310,36 @@ export async function loginUser(identifier: string, password?: string): Promise<
         matched = normalizeUserFromDoc(freshSnap.id, freshSnap.data(), matched);
       }
     } catch {}
+  }
+
+  if (matched.id === ADMIN_UID) {
+    const needsAdminSync = matched.role !== 'admin' || matched.accountStatus !== 'ativo';
+    matched = {
+      ...matched,
+      role: 'admin',
+      accountStatus: 'ativo'
+    };
+    if (needsAdminSync || authenticatedViaFirebase) {
+      writeDocToFirestore('users', matched.id, matched, true).catch(() => {});
+    }
+    if (!memoryWallets[matched.id]) {
+      const starterAdminWallet: Wallet = {
+        ...(INITIAL_WALLETS[ADMIN_UID] || {
+          userId: matched.id,
+          availableBalance: 50000000,
+          pendingBalance: 0,
+          reservedBalance: 0,
+          totalDeposited: 50000000,
+          totalSpent: 0,
+          totalEarned: 0,
+          totalWithdrawn: 0
+        }),
+        updatedAt: new Date().toISOString()
+      };
+      memoryWallets[matched.id] = starterAdminWallet;
+      backupToStorage(DB_KEYS.WALLETS, memoryWallets);
+      writeDocToFirestore('wallets', matched.id, starterAdminWallet, true).catch(() => {});
+    }
   }
 
   // 6. Bloquear entrada se a conta ainda estiver em revisão ou tiver sido rejeitada pelo Administrador
@@ -2430,7 +2495,7 @@ export function resubmitKYCDocuments(
   }
 
   createNotification(
-    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    ADMIN_UID,
     'Documento BI Reenviado para Validação 📋',
     `${updated.name} reenviou as fotografias do BI ${updated.idNumber} para nova análise no Painel Adm.`,
     'sistema',
@@ -2457,7 +2522,7 @@ function assertAdminCaller(): void {
 
 export function suspendUser(userId: string, reason?: string): User {
   assertAdminCaller();
-  if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin') {
+  if (userId === ADMIN_UID) {
     throw new Error('Não é possível suspender a conta do Administrador Master.');
   }
   const idx = memoryUsers.findIndex(u => u && u.id === userId);
@@ -2534,7 +2599,7 @@ export function reactivateUser(userId: string): User {
 
 export function deleteUserAccount(userId: string): void {
   assertAdminCaller();
-  if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin') {
+  if (userId === ADMIN_UID) {
     throw new Error('Não é possível eliminar a conta do Administrador Master.');
   }
   const target = getUsers().find(u => u && u.id === userId);
@@ -2738,7 +2803,7 @@ export function adjustUserBalance(
   amount: number,
   type: 'add' | 'remove',
   reason: string,
-  adminId: string = 'kt5dFLArJzV7hCNMQ3ZvgqFokM62'
+  adminId: string = ADMIN_UID
 ): { wallet: Wallet; transaction: Transaction } {
   assertAdminCaller();
   const users = getUsers();
@@ -2864,7 +2929,7 @@ export function requestDeposit(
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
   createNotification(
-    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    ADMIN_UID,
     'Novo Depósito Pendente de Aprovação 💰',
     `${newDeposit.userName} solicitou um depósito de ${formatMoney(numericAmount)} (Ref: ${reference}). Aprova no Painel do Adm para creditar na carteira.`,
     'sistema',
@@ -3071,7 +3136,7 @@ export function requestWithdrawal(
   backupToStorage(DB_KEYS.TRANSACTIONS, memoryTransactions);
 
   createNotification(
-    'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+    ADMIN_UID,
     'Novo Saque Pendente de Aprovação 🏦',
     `${newWithdrawal.userName} solicitou um levantamento de ${formatMoney(numericAmount)} para ${newWithdrawal.bankName} (${newWithdrawal.iban}).`,
     'sistema',
@@ -3236,10 +3301,7 @@ export function createResaleListing(
     throw new Error('Este artigo já foi vendido.');
   }
   const user = getUsers().find(u => u.id === sellerId);
-  const isAdmin =
-    sellerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    sellerId === 'usr_admin' ||
-    user?.role === 'admin';
+  const isAdmin = sellerId === ADMIN_UID || user?.role === 'admin';
   const nowIso = new Date().toISOString();
 
   const newListing: ResaleListing = {
@@ -3269,7 +3331,7 @@ export function createResaleListing(
 
   if (!isAdmin) {
     createNotification(
-      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      ADMIN_UID,
       'Novo Anúncio de Revenda Pendente 📦',
       `${newListing.sellerName} submeteu "${newListing.productName}" por ${formatMoney(listingPrice)} para aprovação no Mercado de Revenda.`,
       'sistema',
@@ -3402,8 +3464,7 @@ function executeConfirmedResaleSettlement(
   };
   const isAdminOrPersona =
     buyerId.startsWith('persona_') ||
-    buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    buyerId === 'usr_admin';
+    buyerId === ADMIN_UID;
 
   if (buyerWallet.availableBalance < paidPrice) {
     if (isAdminOrPersona) {
@@ -3640,8 +3701,7 @@ export function purchaseResaleListing(
   const buyerUser = getUsers().find(u => u.id === buyerId);
   const isAdminOrPersona =
     buyerId.startsWith('persona_') ||
-    buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    buyerId === 'usr_admin' ||
+    buyerId === ADMIN_UID ||
     buyerUser?.role === 'admin';
 
   if (!isAdminOrPersona) {
@@ -3997,7 +4057,7 @@ export function rejectOrder(orderId: string, reason: string): Order {
 // ==========================================
 export function getNegotiations(userId: string): Negotiation[] {
   const user = getUsers().find(u => u.id === userId);
-  if (userId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || userId === 'usr_admin' || user?.role === 'admin') {
+  if (userId === ADMIN_UID || user?.role === 'admin') {
     return memoryNegotiations;
   }
   return memoryNegotiations.filter(n => {
@@ -4027,8 +4087,7 @@ export function createNegotiation(
   const isAdminOrPersona =
     Boolean(customBuyerName?.trim()) ||
     buyerId.startsWith('persona_') ||
-    buyerId === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
-    buyerId === 'usr_admin' ||
+    buyerId === ADMIN_UID ||
     buyer?.role === 'admin';
   const resolvedBuyerName = customBuyerName?.trim() || (buyer ? buyer.name : 'Comprador Interessado');
   const uniqueNegId = `neg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -4081,7 +4140,7 @@ export function createNegotiation(
     );
   } else {
     createNotification(
-      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      ADMIN_UID,
       'Nova Proposta P2P Pendente de Aprovação 🤝',
       `${resolvedBuyerName} enviou proposta de ${formatMoney(proposedPrice)} para "${listing.productName}" (Vendedor: ${listing.sellerName}). Aprova ou recusa no Painel do Adm.`,
       'negociacao',
@@ -4241,7 +4300,7 @@ export function respondSellerNegotiation(
   // Notificar também o Adm quando um vendedor responde numa negociação com persona
   if (neg.buyerId.startsWith('persona_')) {
     createNotification(
-      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      ADMIN_UID,
       `${neg.sellerName} respondeu a ${neg.buyerName} 💬`,
       action === 'aceitar'
         ? `Acordo aceite em "${neg.productName}" por ${formatMoney(neg.currentProposedPrice)}.`
@@ -4373,7 +4432,7 @@ export function sendNegotiationMessage(
   backupToStorage(DB_KEYS.NEGOTIATIONS, memoryNegotiations);
 
   const recipientId = isWaitingAdmin
-    ? 'kt5dFLArJzV7hCNMQ3ZvgqFokM62'
+    ? ADMIN_UID
     : senderId === neg.buyerId
     ? neg.sellerId
     : neg.buyerId;
@@ -4388,7 +4447,7 @@ export function sendNegotiationMessage(
 
   if (!isWaitingAdmin && senderId === neg.sellerId && neg.buyerId.startsWith('persona_')) {
     createNotification(
-      'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      ADMIN_UID,
       `Nova mensagem de ${senderName} para ${neg.buyerName}`,
       `"${text}"`,
       'negociacao',

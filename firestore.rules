@@ -13,8 +13,10 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.uid == 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' ||
+      return isSignedIn() &&
+        request.auth.uid != 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
+        request.auth.uid != 'usr_admin' && (
+        request.auth.uid == 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2' ||
         (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
@@ -68,7 +70,7 @@ service cloud.firestore {
           'updatedAt'
         ])
       );
-      allow delete: if isAdmin() && userId != 'kt5dFLArJzV7hCNMQ3ZvgqFokM62';
+      allow delete: if isAdmin() && userId != 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2';
     }
 
     // Carteiras digitais

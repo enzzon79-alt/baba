@@ -255,7 +255,8 @@ import {
   syncAdminCollectionsFromFirestore,
   getUserInviteCode,
   isOnboardingCompleted,
-  markOnboardingCompleted
+  markOnboardingCompleted,
+  isAdminUserRecord
 } from './services/db';
 import { compressImageToDataUrl, readReceiptFileToDataUrl, copyTextToClipboard } from './utils/image';
 
@@ -2688,7 +2689,7 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
               <span>Gestão Rápida da Tua Conta</span>
             </h3>
             <div className="space-y-2.5">
-              {(e.role === 'admin' || e.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || e.id === 'usr_admin') && (
+              {isAdminUserRecord(e) && (
                 <button
                   type="button"
                   onClick={() => i('admin')}
@@ -2944,7 +2945,7 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
     const timer = setTimeout(() => setShowSplash(false), 3000);
     return () => clearTimeout(timer);
   }, []);
-  (0,_.useEffect)(()=>{ae();try{if(typeof window!=='undefined'){let params=new URLSearchParams(window.location.search);let ref=(params.get('ref')||'').trim().toUpperCase();if(ref){localStorage.setItem('baba_ref_code',ref);}}}catch{}},[]);let[e,t]=(0,_.useState)(()=>{if(!isOnboardingCompleted()){return null;}return se()}),[authMode,setAuthMode]=(0,_.useState)(()=>{if(!isOnboardingCompleted()){return 'presentation';}return null}),[purchaseNotice,setPurchaseNotice]=(0,_.useState)(null),[walletAction,setWalletAction]=(0,_.useState)(null),[walletInitialAmount,setWalletInitialAmount]=(0,_.useState)(50000),[,setCurrencyTick]=(0,_.useState)(0),[n,r]=(0,_.useState)(()=>e?{...N(e.id)}:null),[i,a]=(0,_.useState)(()=>me()),[o,s]=(0,_.useState)(()=>ve()),[c,l]=(0,_.useState)(()=>e?_e(e.id):[]),[u,d]=(0,_.useState)(()=>e?Fe(e.id):[]),[f,p]=(0,_.useState)(()=>e?Me(e.id):[]),[m,h]=(0,_.useState)(()=>{const cur=e;return cur&&(cur.role==='admin'||cur.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'||cur.id==='usr_admin')?'admin':'inicio';}),[g,v]=(0,_.useState)(void 0),[y,b]=(0,_.useState)(``),[x,S]=(0,_.useState)(!1),[C,w]=(0,_.useState)(!1),[T,E]=(0,_.useState)(!1),[D,ee]=(0,_.useState)([]),[te,ne]=(0,_.useState)(null),[inAppToast,setInAppToast]=(0,_.useState)(null),[isClientInfoOpen,setIsClientInfoOpen]=(0,_.useState)(false),[isInviteOpen,setIsInviteOpen]=(0,_.useState)(false),directBuyRef=(0,_.useRef)<((prod:any)=>void)|null>(null),O=(0,_.useCallback)(()=>{let u=se();if(u){if(u.role==='admin'||u.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62'||u.id==='usr_admin'){u={...u,accountStatus:'ativo'};}else{u={...u};}t(u);r({...N(u.id)});l(_e(u.id));d(Fe(u.id));p(Me(u.id));}else{t(null);}a(me());s(ve());},[]);(0,_.useEffect)(()=>{let onDb=()=>{O()};let onVis=()=>{if(document.visibilityState==='visible'){O();}};window.addEventListener(re,onDb);document.addEventListener('visibilitychange',onVis);let curHandler=()=>setCurrencyTick(t=>t+1);window.addEventListener("baba_currency_change",curHandler);return()=>{window.removeEventListener(re,onDb);document.removeEventListener('visibilitychange',onVis);window.removeEventListener("baba_currency_change",curHandler)}},[O]);(0,_.useEffect)(()=>{let handler=(ev:any)=>{if(ev.detail?.msg){setInAppToast({msg:ev.detail.msg,type:ev.detail.type||'error'});}};window.addEventListener('baba_in_app_notification',handler);let openInviteHandler=()=>{h('convidar');v(void 0);};window.addEventListener('baba_open_invite_modal',openInviteHandler);let buyAfterHandler=(ev:any)=>{if(ev?.detail?.product&&directBuyRef.current){directBuyRef.current(ev.detail.product);}};window.addEventListener('baba_buy_after_deposit',buyAfterHandler);return()=>{window.removeEventListener('baba_in_app_notification',handler);window.removeEventListener('baba_open_invite_modal',openInviteHandler);window.removeEventListener('baba_buy_after_deposit',buyAfterHandler);};},[]);(0,_.useEffect)(()=>{if(inAppToast){let t=setTimeout(()=>setInAppToast(null),3500);return()=>clearTimeout(t);}},[inAppToast]);
+  (0,_.useEffect)(()=>{ae();try{if(typeof window!=='undefined'){let params=new URLSearchParams(window.location.search);let ref=(params.get('ref')||'').trim().toUpperCase();if(ref){localStorage.setItem('baba_ref_code',ref);}}}catch{}},[]);let[e,t]=(0,_.useState)(()=>{if(!isOnboardingCompleted()){return null;}return se()}),[authMode,setAuthMode]=(0,_.useState)(()=>{if(!isOnboardingCompleted()){return 'presentation';}return null}),[purchaseNotice,setPurchaseNotice]=(0,_.useState)(null),[walletAction,setWalletAction]=(0,_.useState)(null),[walletInitialAmount,setWalletInitialAmount]=(0,_.useState)(50000),[,setCurrencyTick]=(0,_.useState)(0),[n,r]=(0,_.useState)(()=>e?{...N(e.id)}:null),[i,a]=(0,_.useState)(()=>me()),[o,s]=(0,_.useState)(()=>ve()),[c,l]=(0,_.useState)(()=>e?_e(e.id):[]),[u,d]=(0,_.useState)(()=>e?Fe(e.id):[]),[f,p]=(0,_.useState)(()=>e?Me(e.id):[]),[m,h]=(0,_.useState)(()=>{const cur=e;return isAdminUserRecord(cur)?'admin':'inicio';}),[g,v]=(0,_.useState)(void 0),[y,b]=(0,_.useState)(``),[x,S]=(0,_.useState)(!1),[C,w]=(0,_.useState)(!1),[T,E]=(0,_.useState)(!1),[D,ee]=(0,_.useState)([]),[te,ne]=(0,_.useState)(null),[inAppToast,setInAppToast]=(0,_.useState)(null),[isClientInfoOpen,setIsClientInfoOpen]=(0,_.useState)(false),[isInviteOpen,setIsInviteOpen]=(0,_.useState)(false),directBuyRef=(0,_.useRef)<((prod:any)=>void)|null>(null),O=(0,_.useCallback)(()=>{let u=se();if(u){if(isAdminUserRecord(u)){u={...u,role:'admin',accountStatus:'ativo'};}else{u={...u};}t(u);r({...N(u.id)});l(_e(u.id));d(Fe(u.id));p(Me(u.id));}else{t(null);}a(me());s(ve());},[]);(0,_.useEffect)(()=>{let onDb=()=>{O()};let onVis=()=>{if(document.visibilityState==='visible'){O();}};window.addEventListener(re,onDb);document.addEventListener('visibilitychange',onVis);let curHandler=()=>setCurrencyTick(t=>t+1);window.addEventListener("baba_currency_change",curHandler);return()=>{window.removeEventListener(re,onDb);document.removeEventListener('visibilitychange',onVis);window.removeEventListener("baba_currency_change",curHandler)}},[O]);(0,_.useEffect)(()=>{let handler=(ev:any)=>{if(ev.detail?.msg){setInAppToast({msg:ev.detail.msg,type:ev.detail.type||'error'});}};window.addEventListener('baba_in_app_notification',handler);let openInviteHandler=()=>{h('convidar');v(void 0);};window.addEventListener('baba_open_invite_modal',openInviteHandler);let buyAfterHandler=(ev:any)=>{if(ev?.detail?.product&&directBuyRef.current){directBuyRef.current(ev.detail.product);}};window.addEventListener('baba_buy_after_deposit',buyAfterHandler);return()=>{window.removeEventListener('baba_in_app_notification',handler);window.removeEventListener('baba_open_invite_modal',openInviteHandler);window.removeEventListener('baba_buy_after_deposit',buyAfterHandler);};},[]);(0,_.useEffect)(()=>{if(inAppToast){let t=setTimeout(()=>setInAppToast(null),3500);return()=>clearTimeout(t);}},[inAppToast]);
   if (showSplash) {
     return (
       <div className="fixed inset-0 z-[99999] w-screen h-screen bg-[#FF6600] flex items-center justify-center overflow-hidden select-none">
@@ -2959,9 +2960,10 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
   if (!e || authMode) {
     return (0, V.jsx)(AuthPage, {
       onLoginSuccess: (user: any) => {
-        const isAdm = Boolean(user && (user.role === 'admin' || user.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || user.id === 'usr_admin'));
+        const isAdm = isAdminUserRecord(user);
         if (user) {
           if (isAdm) {
+            user.role = 'admin';
             user.accountStatus = 'ativo';
           }
           ce(user);
@@ -2973,13 +2975,13 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
         v(void 0);
         O();
       },
-      onCancel: e && (e.accountStatus === 'ativo' || e.role === 'admin' || e.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') ? () => setAuthMode(null) : undefined,
+      onCancel: e && (e.accountStatus === 'ativo' || isAdminUserRecord(e)) ? () => setAuthMode(null) : undefined,
       initialMode: authMode || 'presentation'
     });
   };
-  if (e && e.accountStatus === 'em_processamento' && e.role !== 'admin' && e.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') { return (0,V.jsxs)(V.Fragment, { children: [(0,V.jsx)(hn, { user: e, onSwitchUser: () => setAuthMode('login'), onRefreshStatus: O })] }); }
-  if (e && e.accountStatus === 'rejeitado' && e.role !== 'admin' && e.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62')return(0,V.jsxs)(V.Fragment,{children:[(0,V.jsx)(hn,{user:e,onSwitchUser:()=>setAuthMode('login'),onRefreshStatus:O})]});
-  if (e && e.accountStatus === 'suspenso' && e.role !== 'admin' && e.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
+  if (e && e.accountStatus === 'em_processamento' && !isAdminUserRecord(e)) { return (0,V.jsxs)(V.Fragment, { children: [(0,V.jsx)(hn, { user: e, onSwitchUser: () => setAuthMode('login'), onRefreshStatus: O })] }); }
+  if (e && e.accountStatus === 'rejeitado' && !isAdminUserRecord(e))return(0,V.jsxs)(V.Fragment,{children:[(0,V.jsx)(hn,{user:e,onSwitchUser:()=>setAuthMode('login'),onRefreshStatus:O})]});
+  if (e && e.accountStatus === 'suspenso' && !isAdminUserRecord(e)) {
     return (
       <div className="min-h-screen bg-[#0C0D12] text-white flex items-center justify-center p-4">
         <div className="max-w-lg w-full bg-neutral-900 border border-orange-500/40 rounded-3xl p-8 text-center space-y-5 shadow-2xl">
@@ -3010,13 +3012,13 @@ dn=({currentUser:e,onNavigateToMarket:t})=>{let[n,r]=(0,_.useState)(`verificacao
       </div>
     );
   }
-  let ie=prod=>{if(e&&(e.role==='admin'||e.id==='kt5dFLArJzV7hCNMQ3ZvgqFokM62')){showAppNotice('Como Administrador, podes apenas comprar e negociar os produtos que os utilizadores estão a vender no Mercado de Revenda!', 'error');h('revenda');return;}ee(t=>t.find(t=>t.id===prod.id)?t.map(t=>t.id===prod.id?{...t,quantity:t.quantity+1,selectedColor:prod.selectedColor||t.selectedColor}:t):[...t,{id:prod.id,name:prod.name,price:prod.officialPrice,quantity:1,imageUrl:prod.imageUrl,source:`oficial`,selectedColor:prod.selectedColor}])};
+  let ie=prod=>{if(e&&isAdminUserRecord(e)){showAppNotice('Como Administrador, podes apenas comprar e negociar os produtos que os utilizadores estão a vender no Mercado de Revenda!', 'error');h('revenda');return;}ee(t=>t.find(t=>t.id===prod.id)?t.map(t=>t.id===prod.id?{...t,quantity:t.quantity+1,selectedColor:prod.selectedColor||t.selectedColor}:t):[...t,{id:prod.id,name:prod.name,price:prod.officialPrice,quantity:1,imageUrl:prod.imageUrl,source:`oficial`,selectedColor:prod.selectedColor}])};
 let k=prod=>{
   if (!e) {
     setAuthMode('login');
     return;
   }
-  if (e.role === 'admin' || e.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62') {
+  if (isAdminUserRecord(e)) {
     showAppNotice('Como Administrador, podes apenas comprar e negociar os produtos que os utilizadores estão a vender no Mercado de Revenda!', 'error');
     h('revenda');
     return;
@@ -3077,7 +3079,7 @@ let handleQuickDepositAndBuy = () => {
   }
 };
 let A=(e,t)=>{ee(n=>n.map(n=>{if(n.id===e){let e=n.quantity+t;return e>0?{...n,quantity:e}:null}return n}).filter(Boolean))},oe=e=>{ee(t=>t.filter(t=>t.id!==e))},le=()=>{ee([])},ue=e=>{ne(e),O()},de=(e,t)=>{v(t),h(e)},fe=u.filter(e=>!e.read).length,pe=D.reduce((e,t)=>e+t.quantity,0);
-let isAdminUser = Boolean(e && (e.role === 'admin' || e.id === 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' || e.id === 'usr_admin'));
+let isAdminUser = isAdminUserRecord(e);
 let handleLogout=()=>{logoutUser();markOnboardingCompleted(false);t(null);setAuthMode('presentation');};
 return(
   <div className="min-h-screen w-full max-w-full bg-gradient-to-br from-[#F4F1FF] via-[#FFF7F0] to-[#EEF3FF] text-neutral-900 flex flex-col font-sans">

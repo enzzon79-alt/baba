@@ -82,17 +82,16 @@ export const INITIAL_PRODUCTS: Product[] = [createProduct(`tel_01`,`Smartphone A
 
 export const INITIAL_USERS: User[] = [
   {
-    id: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
-    name: 'Administrador Master BABA',
-    email: 'admin@baba.ao',
-    phone: '+244 932 200 719',
-    password: 'Adelina25',
+    id: 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2',
+    name: 'Administrador BABA',
+    email: '',
+    phone: '',
     role: 'admin',
     accountStatus: 'ativo',
     province: 'Luanda',
     city: 'Luanda (Sede Central)',
-    idNumber: '000000000LA001',
-    birthDate: '1990-01-01',
+    idNumber: '',
+    birthDate: '',
     createdAt: '2026-01-01T00:00:00Z'
   }
 ];
@@ -102,8 +101,8 @@ export const INITIAL_USER_PRODUCTS: UserProduct[] = [];
 export const INITIAL_RESALE_LISTINGS: ResaleListing[] = [];
 
 export const INITIAL_WALLETS: Record<string, Wallet> = {
-  kt5dFLArJzV7hCNMQ3ZvgqFokM62: {
-    userId: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+  ABcb3DyaZGMapMxuQ0KqYQdPnqT2: {
+    userId: 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2',
     availableBalance: 50000000,
     pendingBalance: 0,
     reservedBalance: 0,

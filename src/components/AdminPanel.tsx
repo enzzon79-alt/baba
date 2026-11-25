@@ -289,14 +289,7 @@ const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged
   const conversations = useMemo(() => getAllAssistantConversations(), [tick]);
 
   const nonAdminUsers = useMemo(
-    () =>
-      users.filter(
-        u =>
-          u &&
-          u.role !== 'admin' &&
-          u.id !== 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
-          u.id !== 'usr_admin'
-      ),
+    () => users.filter(u => u && !isAdminUserRecord(u)),
     [users]
   );
 
