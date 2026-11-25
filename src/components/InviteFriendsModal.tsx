@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import {
   formatKz,
-  getUsers,
+  getReferrals,
   getTransactions,
   getUserInviteCode,
   DB_STATE_EVENT
@@ -74,24 +74,14 @@ export const InviteFriendsView: React.FC<InviteFriendsViewProps> = ({
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const allUsers = getUsers();
-  const invitedUsers = currentUser
-    ? allUsers.filter(
-        u =>
-          u &&
-          u.id !== currentUser.id &&
-          u.referredBy &&
-          (u.referredBy.toUpperCase() === userCode.toUpperCase() ||
-            u.referredBy.toUpperCase() === String(currentUser.id).toUpperCase())
-      )
-    : [];
+  const invitedList = currentUser ? getReferrals(currentUser.id) : [];
 
   const userTxs = currentUser ? getTransactions(currentUser.id) : [];
   const totalReferralBonus = userTxs
     .filter(t => t.status === 'confirmada' && t.reference?.startsWith('REF-'))
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
-  const approvedInvitesCount = invitedUsers.filter(u => u.accountStatus === 'ativo').length;
+  const approvedInvitesCount = invitedList.filter(r => r.status === 'validado').length;
 
   return (
     <div className={isModal ? 'flex flex-col flex-1 min-h-0' : 'w-full space-y-6 pb-12'}>
@@ -301,7 +291,7 @@ export const InviteFriendsView: React.FC<InviteFriendsViewProps> = ({
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="p-3 rounded-xl bg-neutral-800/80 border border-neutral-700">
               <span className="text-[10px] text-neutral-400 block font-semibold">Amigos Convidados</span>
-              <span className="text-base sm:text-xl font-black text-white tabular-nums">{invitedUsers.length}</span>
+              <span className="text-base sm:text-xl font-black text-white tabular-nums">{invitedList.length}</span>
             </div>
             <div className="p-3 rounded-xl bg-neutral-800/80 border border-neutral-700">
               <span className="text-[10px] text-neutral-400 block font-semibold">Contas Validadas</span>
@@ -317,34 +307,34 @@ export const InviteFriendsView: React.FC<InviteFriendsViewProps> = ({
         {/* Recent Referrals List */}
         <div className="space-y-2">
           <span className="text-xs font-bold text-neutral-700 block">
-            Amigos Convidados ({invitedUsers.length}):
+            Amigos Convidados ({invitedList.length}):
           </span>
-          {invitedUsers.length === 0 ? (
+          {invitedList.length === 0 ? (
             <div className="p-6 text-center border border-neutral-200 rounded-2xl bg-neutral-50/70 text-xs text-neutral-500">
               Ainda não tens amigos registados com o teu link. Copia o teu link acima e partilha!
             </div>
           ) : (
             <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-2xl overflow-hidden bg-neutral-50/50">
-              {invitedUsers.map(f => (
-                <div key={f.id} className="p-3 flex items-center justify-between gap-3 text-xs">
+              {invitedList.map(r => (
+                <div key={r.id} className="p-3 flex items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-neutral-900 text-amber-400 font-bold flex items-center justify-center text-xs shrink-0">
-                      {f.name.charAt(0)}
+                      {(r.invitedName || 'U').charAt(0)}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-bold text-neutral-900 truncate">{f.name}</p>
+                      <p className="font-bold text-neutral-900 truncate">{r.invitedName}</p>
                       <p className="text-[10px] text-neutral-400 font-mono">
-                        BI: {f.idNumber || 'Pendente'} · {f.province}
+                        BI: {r.idNumber || 'Pendente'} · {r.invitedProvince || 'Angola'}
                       </p>
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    {f.accountStatus === 'ativo' ? (
+                    {r.status === 'validado' ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                         <Check className="w-3 h-3 text-emerald-600" />
-                        +1.000 Kz
+                        +{formatKz(r.rewardAmount || 1000)}
                       </span>
-                    ) : f.accountStatus === 'rejeitado' ? (
+                    ) : r.status === 'rejeitado' ? (
                       <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md">
                         Rejeitado
                       </span>

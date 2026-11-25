@@ -1,25 +1,9 @@
 import { GoogleGenAI, ThinkingLevel, Type, type FunctionDeclaration } from '@google/genai';
 
-export interface StoreCollections {
-  products: Record<string, any>;
-  users: Record<string, any>;
-  deleted_users: Record<string, any>;
-  wallets: Record<string, any>;
-  resale_listings: Record<string, any>;
-  user_products: Record<string, any>;
-  negotiations: Record<string, any>;
-  notifications: Record<string, any>;
-  deposits: Record<string, any>;
-  withdrawals: Record<string, any>;
-  transactions: Record<string, any>;
-  orders: Record<string, any>;
-  assistant_conversations: Record<string, any>;
-}
-
-export interface StoreAccess {
-  collections: StoreCollections;
-  upsertDoc: (collection: string, id: string, data: Record<string, any>, merge?: boolean) => any;
-}
+const FIREBASE_PROJECT_ID = 'lucano-375bf';
+const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY || 'AIzaSyBuhej6-6idJS2cPEdaad66Svr4wffvBfc';
+const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents`;
+const ADMIN_UID = 'oYHKf9Uvp5Sm0aPyUefjM8aNrrK2';
 
 export interface JenifferChatResult {
   ok: boolean;
@@ -46,21 +30,21 @@ Usa esta base como referência principal (compreendendo e adaptando naturalmente
 
 1. **Como funciona a plataforma (Aplicativo / Compra & Revenda)**:
    - Os clientes compram produtos no **Mercado Oficial** a preços de atacado usando o saldo da carteira digital e podem manter os artigos ou revendê-los no **Mercado de Revenda P2P** para obter lucro.
-   - Os pedidos de compra ficam em estado **Pendente** até aprovação do Administrador; após aprovação, o valor é debitado e o artigo entra em **Meus Produtos**.
+   - As compras no **Mercado Oficial** e no **Mercado de Revenda P2P** são **automáticas e imediatas**: ao confirmar a compra com saldo disponível, o valor é debitado na hora e o artigo entra diretamente na secção **Meus Produtos**.
    - **Acesso diário**: O cliente pode aceder e utilizar o aplicativo todos os dias, sempre que desejar, respeitando as condições de funcionamento da plataforma.
 2. **Depósitos ("Como fazer depósito?" / "Meu depósito não apareceu")**:
    - **Como depositar**: Ir à aba **Carteira**, clicar em **Recarregar** (ou **Depositar**) e seguir as instruções apresentadas no aplicativo, enviando o comprovativo. O pedido fica em estado **Pendente** até validação e aprovação pelo Administrador; só após aprovação entra no saldo disponível.
    - **Depósito não apareceu**: Consultar primeiro os movimentos reais na conta (usando \`consultar_meus_movimentos\`). Orientar o cliente a verificar se a operação foi concluída; se já foi concluída e ainda não constar, orientar a contactar o suporte oficial apresentando o comprovativo (e oferecer/realizar encaminhamento ao Administrador se necessário).
 3. **Saques / Levantamentos ("Quanto tempo demora?", "Como sei se foi aprovado?", "Taxas?")**:
    - **Prazo de processamento**: O prazo indicado para processamento do saque é de **5 a 15 minutos**, podendo variar conforme as condições da operação e aprovação do Administrador.
-   - **Valor mínimo e método**: Levantamento mínimo de **2.000 Kz** via transferência bancária (**IBAN**). Fica em estado **Pendente** até aprovação do Administrador, momento em que é debitado da carteira.
+   - **Qualquer valor e método**: O cliente pode solicitar levantamento de **qualquer valor disponível** na carteira (desde que positivo e dentro do saldo gastável) via transferência bancária (**IBAN**). Fica em estado **Pendente** até aprovação do Administrador, momento em que é debitado da carteira.
    - **Como saber se foi aprovado**: Consultar o histórico/extrato de operações na aba **Carteira** (ou verificar diretamente aqui com \`consultar_meus_movimentos\`).
    - **Taxas nos levantamentos e comissões**: As taxas aplicáveis nos levantamentos devem ser consultadas diretamente na área de levantamentos ou nos termos da plataforma antes de confirmar o pedido. No mercado de revenda P2P aplica-se comissão oficial de **5%** sobre a venda concluída, conforme apresentado no momento de anunciar.
 4. **Consultar Saldo**:
    - O cliente pode consultar o saldo disponível a qualquer momento entrando na opção **Carteira** — e sempre que perguntar pelo seu saldo aqui no chat, deves consultar primeiro \`consultar_minha_carteira\` para dar o valor real exato.
 5. **Produtos & Compras ("Como comprar?", "Como publicar?", "Alterar preço?", "Cancelar anúncio?", "Quanto tempo demora a ser comprado?")**:
    - **Comprar um produto**: Entrar na área de produtos (**Mercado Oficial** ou **Revenda P2P**), escolher o artigo desejado e seguir as instruções para efetuar a compra (usando o saldo da carteira).
-   - **Publicar um produto**: Aceder à área **Meus Produtos**, selecionar o artigo pretendido na opção de publicar/revender e preencher todas as informações solicitadas (incluindo o preço de venda).
+   - **Publicar um produto**: Aceder à área **Meus Produtos**, selecionar o artigo pretendido na opção de publicar/revender e preencher todas as informações solicitadas (incluindo qualquer preço de venda desejado).
    - **Alterar preço do produto**: Caso a plataforma permita editar o anúncio, aceder a **Meus Produtos** e verificar a opção de edição/preço disponível para o anúncio.
    - **Cancelar um anúncio**: Aceder a **Meus Produtos**, localizar o anúncio ativo no mercado de revenda e utilizar a opção **Cancelar Anúncio** para retirar o produto da venda e devolvê-lo ao stock pessoal.
    - **Quanto tempo demora para ser comprado**: Depende do preço definido no anúncio e do interesse dos compradores; quanto mais atrativo e competitivo for o preço, maior poderá ser a procura.
@@ -185,27 +169,205 @@ function computeUserInviteCode(user: any): string {
   return `BABA-${firstName}${suffix}`;
 }
 
-function getStrictUserScopedData(store: StoreAccess, userId: string, conversationId: string) {
-  const cols = store.collections;
-  const user = cols.users?.[userId];
+function fromFirestoreValue(val: any): any {
+  if (!val || typeof val !== 'object') return null;
+  if ('nullValue' in val) return null;
+  if ('booleanValue' in val) return Boolean(val.booleanValue);
+  if ('integerValue' in val) return Number(val.integerValue);
+  if ('doubleValue' in val) return Number(val.doubleValue);
+  if ('timestampValue' in val) return String(val.timestampValue);
+  if ('stringValue' in val) return String(val.stringValue);
+  if ('arrayValue' in val) {
+    const arr = val.arrayValue?.values;
+    return Array.isArray(arr) ? arr.map(fromFirestoreValue) : [];
+  }
+  if ('mapValue' in val) {
+    const fields = val.mapValue?.fields || {};
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      out[k] = fromFirestoreValue(v);
+    }
+    return out;
+  }
+  return null;
+}
 
-  const getUserWallet = () => {
-    const w = cols.wallets?.[userId];
+function toFirestoreValue(val: any): any {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === 'boolean') return { booleanValue: val };
+  if (typeof val === 'number') {
+    if (!Number.isFinite(val)) return { doubleValue: 0 };
+    return Number.isInteger(val) ? { integerValue: String(val) } : { doubleValue: val };
+  }
+  if (typeof val === 'string') return { stringValue: val };
+  if (Array.isArray(val)) {
+    return {
+      arrayValue: {
+        values: val.filter(item => item !== undefined).map(item => toFirestoreValue(item))
+      }
+    };
+  }
+  if (typeof val === 'object') {
+    const fields: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (v !== undefined) {
+        fields[k] = toFirestoreValue(v);
+      }
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(val) };
+}
+
+function decodeFirestoreDoc(docJson: any): any {
+  if (!docJson || typeof docJson !== 'object' || !docJson.fields) return null;
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(docJson.fields)) {
+    out[k] = fromFirestoreValue(v);
+  }
+  const nameStr = String(docJson.name || '');
+  const idPart = nameStr.split('/').pop();
+  if (idPart && !out.id) {
+    out.id = idPart;
+  }
+  return out;
+}
+
+async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; email?: string } | null> {
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(FIREBASE_WEB_API_KEY)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken })
+      }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as any;
+    const user = data?.users?.[0];
+    if (!user?.localId) return null;
+    return { uid: String(user.localId), email: user.email ? String(user.email) : undefined };
+  } catch {
+    return null;
+  }
+}
+
+async function getFirestoreDocRest(collectionName: string, docId: string, idToken: string): Promise<any> {
+  const res = await fetch(`${FIRESTORE_BASE_URL}/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}`, {
+    headers: { Authorization: `Bearer ${idToken}` }
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Firestore GET ${collectionName}/${docId} failed (${res.status}): ${text}`);
+  }
+  const json = await res.json();
+  return decodeFirestoreDoc(json);
+}
+
+async function queryFirestoreCollectionRest(
+  collectionId: string,
+  idToken: string,
+  filter?: { field: string; op?: 'EQUAL'; value: string },
+  limitCount = 50
+): Promise<any[]> {
+  const structuredQuery: any = {
+    from: [{ collectionId }],
+    limit: limitCount
+  };
+  if (filter) {
+    structuredQuery.where = {
+      fieldFilter: {
+        field: { fieldPath: filter.field },
+        op: filter.op || 'EQUAL',
+        value: { stringValue: filter.value }
+      }
+    };
+  }
+  const res = await fetch(`${FIRESTORE_BASE_URL}:runQuery`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ structuredQuery })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.warn(`Firestore query ${collectionId} note (${res.status}):`, text);
+    return [];
+  }
+  const rows = (await res.json()) as any[];
+  if (!Array.isArray(rows)) return [];
+  const results: any[] = [];
+  for (const row of rows) {
+    if (row?.document) {
+      const parsed = decodeFirestoreDoc(row.document);
+      if (parsed) results.push(parsed);
+    }
+  }
+  return results;
+}
+
+async function upsertFirestoreDocRest(
+  collectionName: string,
+  docId: string,
+  data: Record<string, any>,
+  idToken: string
+): Promise<any> {
+  const cleanData: Record<string, any> = { ...data, id: data.id || docId };
+  const fields: Record<string, any> = {};
+  for (const [k, v] of Object.entries(cleanData)) {
+    if (v !== undefined) {
+      fields[k] = toFirestoreValue(v);
+    }
+  }
+  const res = await fetch(`${FIRESTORE_BASE_URL}/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ fields })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Firestore PATCH ${collectionName}/${docId} failed (${res.status}): ${text}`);
+  }
+  const json = await res.json();
+  return decodeFirestoreDoc(json) || cleanData;
+}
+
+function createStrictUserToolExecutor(params: {
+  userId: string;
+  user: any;
+  conversationId: string;
+  idToken: string;
+}) {
+  const { userId, user, conversationId, idToken } = params;
+
+  const getUserWallet = async () => {
+    const [w, withdrawals, orders] = await Promise.all([
+      getFirestoreDocRest('wallets', userId, idToken).catch(() => null),
+      queryFirestoreCollectionRest('withdrawals', idToken, { field: 'userId', value: userId }, 50),
+      queryFirestoreCollectionRest('orders', idToken, { field: 'buyerId', value: userId }, 50)
+    ]);
     if (!w) {
       return {
         encontrado: false,
-        aviso: 'Carteira ainda não inicializada no servidor.',
+        aviso: 'Carteira ainda não inicializada no Firestore.',
         availableBalance: 0,
         pendingBalance: 0,
         reservedBalance: 0,
         spendableBalance: 0
       };
     }
-    const pendingRes = Object.values(cols.withdrawals || {})
-      .filter((wd: any) => wd && wd.userId === userId && wd.status === 'pendente')
+    const pendingRes = withdrawals
+      .filter((wd: any) => wd && wd.status === 'pendente')
       .reduce((sum: number, wd: any) => sum + (Number(wd.amount) || 0), 0);
-    const ordRes = Object.values(cols.orders || {})
-      .filter((o: any) => o && o.buyerId === userId && o.status === 'aguardando_aprovacao')
+    const ordRes = orders
+      .filter((o: any) => o && o.status === 'aguardando_aprovacao')
       .reduce((sum: number, o: any) => sum + (Number(o.totalAmount) || 0), 0);
     const available = Number(w.availableBalance) || 0;
     const spendable = Math.max(0, available - pendingRes - ordRes);
@@ -225,7 +387,7 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
     };
   };
 
-  const executeTool = (name: string, args: Record<string, any> = {}): any => {
+  const executeTool = async (name: string, args: Record<string, any> = {}): Promise<any> => {
     if (name === 'consultar_minha_conta') {
       if (!user) return { encontrado: false, mensagem: 'Utilizador não encontrado.' };
       return {
@@ -245,7 +407,7 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
     }
 
     if (name === 'consultar_minha_carteira') {
-      return getUserWallet();
+      return await getUserWallet();
     }
 
     if (name === 'consultar_meus_movimentos') {
@@ -253,8 +415,20 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
       const sortDesc = (a: any, b: any) =>
         new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime();
 
-      const deposits = Object.values(cols.deposits || {})
-        .filter((d: any) => d && d.userId === userId)
+      const [rawDeposits, rawWithdrawals, buyerOrders, sellerOrders, rawTransactions] = await Promise.all([
+        queryFirestoreCollectionRest('deposits', idToken, { field: 'userId', value: userId }, 25),
+        queryFirestoreCollectionRest('withdrawals', idToken, { field: 'userId', value: userId }, 25),
+        queryFirestoreCollectionRest('orders', idToken, { field: 'buyerId', value: userId }, 25),
+        queryFirestoreCollectionRest('orders', idToken, { field: 'sellerId', value: userId }, 25),
+        queryFirestoreCollectionRest('transactions', idToken, { field: 'userId', value: userId }, 30)
+      ]);
+
+      const mergedOrdersMap = new Map<string, any>();
+      [...buyerOrders, ...sellerOrders].forEach(o => {
+        if (o?.id) mergedOrdersMap.set(o.id, o);
+      });
+
+      const deposits = rawDeposits
         .sort(sortDesc)
         .slice(0, 10)
         .map((d: any) => ({
@@ -267,8 +441,7 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
           data: d.createdAt
         }));
 
-      const withdrawals = Object.values(cols.withdrawals || {})
-        .filter((w: any) => w && w.userId === userId)
+      const withdrawals = rawWithdrawals
         .sort(sortDesc)
         .slice(0, 10)
         .map((w: any) => ({
@@ -281,8 +454,7 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
           data: w.createdAt
         }));
 
-      const orders = Object.values(cols.orders || {})
-        .filter((o: any) => o && (o.buyerId === userId || o.sellerId === userId))
+      const orders = Array.from(mergedOrdersMap.values())
         .sort(sortDesc)
         .slice(0, 10)
         .map((o: any) => ({
@@ -298,8 +470,7 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
           data: o.createdAt
         }));
 
-      const transactions = Object.values(cols.transactions || {})
-        .filter((t: any) => t && t.userId === userId)
+      const transactions = rawTransactions
         .sort(sortDesc)
         .slice(0, 12)
         .map((t: any) => ({
@@ -320,47 +491,51 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
     }
 
     if (name === 'consultar_meus_produtos_e_anuncios') {
-      const owned = Object.values(cols.user_products || {})
-        .filter((p: any) => p && p.currentOwnerId === userId)
-        .map((p: any) => ({
+      const [ownedRaw, listingsRaw, buyerNegs, sellerNegs] = await Promise.all([
+        queryFirestoreCollectionRest('user_products', idToken, { field: 'currentOwnerId', value: userId }, 40),
+        queryFirestoreCollectionRest('resale_listings', idToken, { field: 'sellerId', value: userId }, 40),
+        queryFirestoreCollectionRest('negotiations', idToken, { field: 'buyerId', value: userId }, 30),
+        queryFirestoreCollectionRest('negotiations', idToken, { field: 'sellerId', value: userId }, 30)
+      ]);
+
+      const mergedNegsMap = new Map<string, any>();
+      [...buyerNegs, ...sellerNegs].forEach(n => {
+        if (n?.id) mergedNegsMap.set(n.id, n);
+      });
+
+      return {
+        meusProdutos: ownedRaw.map((p: any) => ({
           id: p.id,
           nome: p.productName,
           categoria: p.category,
           precoCompraKz: Number(p.purchasePrice ?? p.originalPrice) || 0,
           estado: p.status,
           cor: p.selectedColor || null
-        }));
-
-      const listings = Object.values(cols.resale_listings || {})
-        .filter((l: any) => l && l.sellerId === userId)
-        .map((l: any) => ({
+        })),
+        meusAnunciosRevenda: listingsRaw.map((l: any) => ({
           id: l.id,
           produto: l.productName,
           precoAnuncioKz: Number(l.listingPrice) || 0,
           estado: l.status,
           motivoRejeicao: l.rejectionReason || null
-        }));
-
-      const negotiations = Object.values(cols.negotiations || {})
-        .filter((n: any) => n && (n.buyerId === userId || n.sellerId === userId))
-        .map((n: any) => ({
+        })),
+        minhasNegociacoes: Array.from(mergedNegsMap.values()).map((n: any) => ({
           id: n.id,
           produto: n.productName,
           papel: n.sellerId === userId ? 'vendedor' : 'comprador',
           valorPropostoKz: Number(n.currentProposedPrice) || 0,
           estado: n.status
-        }));
-
-      return {
-        meusProdutos: owned,
-        meusAnunciosRevenda: listings,
-        minhasNegociacoes: negotiations
+        }))
       };
     }
 
     if (name === 'consultar_catalogo_oficial') {
       const q = String(args?.termo || '').trim().toLowerCase();
-      const allProducts = Object.values(cols.products || {});
+      const [allProducts, activeResale] = await Promise.all([
+        queryFirestoreCollectionRest('products', idToken, undefined, 250),
+        queryFirestoreCollectionRest('resale_listings', idToken, { field: 'status', value: 'ativo' }, 100)
+      ]);
+
       const matched =
         !q || q === 'todos' || q === 'all'
           ? allProducts.slice(0, 15)
@@ -374,13 +549,9 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
               )
               .slice(0, 15);
 
-      const activeResaleCount = Object.values(cols.resale_listings || {}).filter(
-        (l: any) => l && l.status === 'ativo'
-      ).length;
-
       return {
         totalProdutosOficiais: allProducts.length,
-        totalAnunciosRevendaAtivos: activeResaleCount,
+        totalAnunciosRevendaAtivos: activeResale.length,
         produtos: matched.map((p: any) => ({
           id: p.id,
           nome: p.name,
@@ -395,31 +566,36 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
     }
 
     if (name === 'encaminhar_para_administrador') {
-      const motivo = String(args?.motivo || 'Pedido encaminhado pela Assistente Jeniffer para análise administrativa.').trim();
+      const motivo = String(
+        args?.motivo || 'Pedido encaminhado pela Assistente Jeniffer para análise administrativa.'
+      ).trim();
       const nowIso = new Date().toISOString();
-      const currentConv = cols.assistant_conversations?.[conversationId];
+      const currentConv = await getFirestoreDocRest('assistant_conversations', conversationId, idToken).catch(
+        () => null
+      );
       if (currentConv) {
-        store.upsertDoc(
+        await upsertFirestoreDocRest(
           'assistant_conversations',
           conversationId,
           {
+            ...currentConv,
             status: 'aguardando_adm',
             escalationReason: motivo,
             escalatedAt: nowIso,
             unreadByAdmin: true,
             updatedAt: nowIso
           },
-          true
+          idToken
         );
       }
 
       const notifId = `notif_jeniffer_${Date.now()}`;
-      store.upsertDoc(
+      await upsertFirestoreDocRest(
         'notifications',
         notifId,
         {
           id: notifId,
-          recipientId: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+          recipientId: ADMIN_UID,
           title: 'Atendimento Encaminhado — Assistente Jeniffer',
           message: `Cliente ${user?.name || userId} precisa de apoio humano: ${motivo}`,
           type: 'sistema',
@@ -428,7 +604,7 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
           linkId: conversationId,
           createdAt: nowIso
         },
-        false
+        idToken
       );
 
       return {
@@ -445,24 +621,35 @@ function getStrictUserScopedData(store: StoreAccess, userId: string, conversatio
   return { executeTool };
 }
 
-export async function processJenifferChat(
-  store: StoreAccess,
-  params: { conversationId: string; userId: string; message: string }
-): Promise<JenifferChatResult> {
-  const { conversationId, userId, message } = params;
+export async function processJenifferChat(params: {
+  conversationId: string;
+  userId: string;
+  message: string;
+  idToken: string;
+}): Promise<JenifferChatResult> {
+  const { conversationId, userId, message, idToken } = params;
   const cleanMsg = String(message || '').trim();
   if (!cleanMsg) {
     return { ok: false, statusCode: 400, code: 'EMPTY_MESSAGE', error: 'Escreve uma mensagem antes de enviar.' };
   }
 
-  const user = store.collections.users?.[userId];
-  const isDeleted = Boolean(store.collections.deleted_users?.[userId]);
-  if (!user || isDeleted) {
+  const verified = await verifyFirebaseIdToken(idToken);
+  if (!verified || verified.uid !== userId) {
+    return {
+      ok: false,
+      statusCode: 401,
+      code: 'INVALID_FIREBASE_TOKEN',
+      error: 'Sessão Firebase inválida ou expirada. Faz login novamente.'
+    };
+  }
+
+  const user = await getFirestoreDocRest('users', userId, idToken).catch(() => null);
+  if (!user) {
     return {
       ok: false,
       statusCode: 403,
       code: 'UNAUTHORIZED_USER',
-      error: 'Utilizador não autorizado ou conta inexistente.'
+      error: 'Conta de utilizador não encontrada no Cloud Firestore.'
     };
   }
 
@@ -478,7 +665,9 @@ export async function processJenifferChat(
   }
 
   const nowIso = new Date().toISOString();
-  const existingConv = store.collections.assistant_conversations?.[conversationId];
+  const existingConv = await getFirestoreDocRest('assistant_conversations', conversationId, idToken).catch(
+    () => null
+  );
   const prevMessages: any[] = Array.isArray(existingConv?.messages) ? existingConv.messages : [];
 
   const userMessageObj = {
@@ -490,7 +679,6 @@ export async function processJenifferChat(
     timestamp: nowIso
   };
 
-  // Build initial conversation record BEFORE calling Gemini so user message is persisted immediately
   const updatedTitle =
     existingConv?.title && existingConv.title !== 'Novo Atendimento'
       ? existingConv.title
@@ -515,7 +703,7 @@ export async function processJenifferChat(
     createdAt: existingConv?.createdAt || nowIso,
     updatedAt: nowIso
   };
-  store.upsertDoc('assistant_conversations', conversationId, baseConv, false);
+  await upsertFirestoreDocRest('assistant_conversations', conversationId, baseConv, idToken);
 
   try {
     const ai = new GoogleGenAI({
@@ -528,9 +716,13 @@ export async function processJenifferChat(
       }
     });
 
-    const { executeTool } = getStrictUserScopedData(store, userId, conversationId);
+    const { executeTool } = createStrictUserToolExecutor({
+      userId,
+      user,
+      conversationId,
+      idToken
+    });
 
-    // Format previous conversation turns cleanly for unlimited multi-turn continuity
     const historyTurns: any[] = prevMessages.slice(-20).map(m => ({
       role: m.sender === 'user' ? 'user' : 'model',
       parts: [
@@ -613,7 +805,7 @@ export async function processJenifferChat(
         for (const fc of functionCalls) {
           const fnName = fc.name || '';
           const fnArgs = (fc.args || {}) as Record<string, any>;
-          const toolResult = executeTool(fnName, fnArgs);
+          const toolResult = await executeTool(fnName, fnArgs);
           const friendlyLabel = TOOL_LABELS[fnName] || fnName;
           if (!consultedToolLabels.includes(friendlyLabel)) {
             consultedToolLabels.push(friendlyLabel);
@@ -651,7 +843,8 @@ export async function processJenifferChat(
     }
 
     const replyNow = new Date().toISOString();
-    const latestConv = store.collections.assistant_conversations?.[conversationId] || baseConv;
+    const latestConv =
+      (await getFirestoreDocRest('assistant_conversations', conversationId, idToken).catch(() => null)) || baseConv;
     const replyMessageObj = {
       id: `jmsg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       conversationId,
@@ -663,8 +856,11 @@ export async function processJenifferChat(
       escalated: escalatedInTurn
     };
 
-    const nextMessages = [...(Array.isArray(latestConv.messages) ? latestConv.messages : baseConv.messages), replyMessageObj];
-    const finalConv = store.upsertDoc(
+    const nextMessages = [
+      ...(Array.isArray(latestConv.messages) ? latestConv.messages : baseConv.messages),
+      replyMessageObj
+    ];
+    const finalConv = await upsertFirestoreDocRest(
       'assistant_conversations',
       conversationId,
       {
@@ -676,7 +872,7 @@ export async function processJenifferChat(
         unreadByUser: false,
         updatedAt: replyNow
       },
-      false
+      idToken
     );
 
     return {
@@ -710,26 +906,40 @@ export async function processJenifferChat(
       statusCode: status >= 400 && status < 600 ? status : 502,
       code: errorCode,
       error: userFriendlyError,
-      conversation: store.collections.assistant_conversations?.[conversationId] || baseConv
+      conversation: baseConv
     };
   }
 }
 
-export function escalateToAdminManual(
-  store: StoreAccess,
-  params: { conversationId: string; userId: string; reason: string }
-): JenifferChatResult {
-  const { conversationId, userId, reason } = params;
-  const user = store.collections.users?.[userId];
-  const isDeleted = Boolean(store.collections.deleted_users?.[userId]);
-  if (!user || isDeleted) {
+export async function escalateToAdminManual(params: {
+  conversationId: string;
+  userId: string;
+  reason: string;
+  idToken: string;
+}): Promise<JenifferChatResult> {
+  const { conversationId, userId, reason, idToken } = params;
+
+  const verified = await verifyFirebaseIdToken(idToken);
+  if (!verified || verified.uid !== userId) {
+    return {
+      ok: false,
+      statusCode: 401,
+      code: 'INVALID_FIREBASE_TOKEN',
+      error: 'Sessão Firebase inválida ou expirada. Faz login novamente.'
+    };
+  }
+
+  const user = await getFirestoreDocRest('users', userId, idToken).catch(() => null);
+  if (!user) {
     return { ok: false, statusCode: 403, code: 'UNAUTHORIZED_USER', error: 'Utilizador não autorizado.' };
   }
 
   const cleanReason =
     String(reason || '').trim() || 'O cliente solicitou intervenção humana do Administrador.';
   const nowIso = new Date().toISOString();
-  const existingConv = store.collections.assistant_conversations?.[conversationId];
+  const existingConv = await getFirestoreDocRest('assistant_conversations', conversationId, idToken).catch(
+    () => null
+  );
   const prevMessages: any[] = Array.isArray(existingConv?.messages) ? existingConv.messages : [];
 
   const systemReply = {
@@ -743,7 +953,7 @@ export function escalateToAdminManual(
     escalated: true
   };
 
-  const nextConv = store.upsertDoc(
+  const nextConv = await upsertFirestoreDocRest(
     'assistant_conversations',
     conversationId,
     {
@@ -763,16 +973,16 @@ export function escalateToAdminManual(
       createdAt: existingConv?.createdAt || nowIso,
       updatedAt: nowIso
     },
-    false
+    idToken
   );
 
   const notifId = `notif_jeniffer_esc_${Date.now()}`;
-  store.upsertDoc(
+  await upsertFirestoreDocRest(
     'notifications',
     notifId,
     {
       id: notifId,
-      recipientId: 'kt5dFLArJzV7hCNMQ3ZvgqFokM62',
+      recipientId: ADMIN_UID,
       title: 'Novo Atendimento Encaminhado ao Adm',
       message: `${user.name || 'Cliente'} pediu apoio humano: ${cleanReason}`,
       type: 'sistema',
@@ -781,7 +991,7 @@ export function escalateToAdminManual(
       linkId: conversationId,
       createdAt: nowIso
     },
-    false
+    idToken
   );
 
   return { ok: true, conversation: nextConv, replyMessage: systemReply };

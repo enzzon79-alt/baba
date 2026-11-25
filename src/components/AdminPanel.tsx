@@ -63,6 +63,7 @@ import {
   getProducts,
   updateProduct,
   createProduct,
+  seedStarterCatalogToFirestore,
   getAllAssistantConversations,
   adminReplyAssistantConversation,
   adminUpdateAssistantStatus,
@@ -70,6 +71,7 @@ import {
   formatKz,
   DB_STATE_EVENT
 } from '../services/db';
+import { CATEGORIES } from '../data/mockData';
 import { auth } from '../services/firebase';
 import { copyTextToClipboard } from '../utils/image';
 
@@ -146,6 +148,7 @@ const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged
   const [settingsSubTab, setSettingsSubTab] = useState<'catalogo' | 'suporte'>('suporte');
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogLimit, setCatalogLimit] = useState(30);
+  const [seedingCatalog, setSeedingCatalog] = useState(false);
 
   // Modals & action dialogs
   const [biModalUser, setBiModalUser] = useState<User | null>(null);
@@ -388,7 +391,7 @@ const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged
         createProduct({
           name: editingProduct.name.trim(),
           description: editingProduct.description?.trim() || 'Artigo oficial verificado BABA SHOPPING.',
-          category: editingProduct.category || 'eletronicos',
+          category: editingProduct.category || 'computadores_eletronicos',
           brand: editingProduct.brand?.trim() || 'BABA Official',
           officialPrice: Number(editingProduct.officialPrice),
           suggestedResalePrice:
@@ -413,6 +416,7 @@ const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged
       } else if (editingProduct.id) {
         updateProduct(editingProduct.id, {
           name: editingProduct.name,
+          category: editingProduct.category || 'computadores_eletronicos',
           brand: editingProduct.brand,
           officialPrice: Number(editingProduct.officialPrice),
           suggestedResalePrice: Number(editingProduct.suggestedResalePrice),
@@ -2133,12 +2137,36 @@ const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged
                     </div>
                     <button
                       type="button"
+                      disabled={seedingCatalog}
+                      onClick={async () => {
+                        setSeedingCatalog(true);
+                        try {
+                          const added = await seedStarterCatalogToFirestore();
+                          if (added > 0) {
+                            notify(`${added} produtos importados para o Cloud Firestore!`);
+                          } else {
+                            notify('Todos os produtos iniciais já estão no Cloud Firestore.');
+                          }
+                          refresh();
+                        } catch (err: any) {
+                          notify(err?.message || 'Erro ao importar catálogo inicial.', 'error');
+                        } finally {
+                          setSeedingCatalog(false);
+                        }
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${seedingCatalog ? 'animate-spin' : ''}`} />
+                      <span>{seedingCatalog ? 'A importar...' : 'Importar Catálogo Inicial'}</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         setIsNewProduct(true);
                         setEditingProduct({
                           name: '',
                           brand: 'BABA Official',
-                          category: 'eletronicos',
+                          category: 'computadores_eletronicos',
                           officialPrice: 25000,
                           suggestedResalePrice: 35000,
                           stock: 50,
@@ -2559,6 +2587,21 @@ const AdminPanelInner: React.FC<AdminPanelProps> = ({ currentUser, onDataChanged
                 required
                 className="w-full p-2.5 rounded-xl bg-[#101830] border border-slate-700 text-white"
               />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 font-bold mb-1">Categoria: *</label>
+              <select
+                value={editingProduct.category || 'computadores_eletronicos'}
+                onChange={e => setEditingProduct({ ...editingProduct, category: e.target.value })}
+                className="w-full p-2.5 rounded-xl bg-[#101830] border border-slate-700 text-white"
+              >
+                {CATEGORIES.map(cat => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

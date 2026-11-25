@@ -223,6 +223,45 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "userId", "status", "createdAt"]
+    },
+    "Referral": {
+      "title": "Referral",
+      "description": "Registo de convite e recompensa de indicação no Cloud Firestore",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "referrerId": { "type": "string" },
+        "invitedUserId": { "type": "string" },
+        "invitedName": { "type": "string" },
+        "invitedProvince": { "type": "string" },
+        "idNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["em_processamento", "validado", "rejeitado"] },
+        "rewardPaid": { "type": "boolean" },
+        "rewardAmount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "referrerId", "invitedUserId", "status", "createdAt"]
+    },
+    "ReferralCode": {
+      "title": "ReferralCode",
+      "description": "Mapa código de convite -> userId",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" }
+      },
+      "required": ["code", "userId"]
+    },
+    "LoginHint": {
+      "title": "LoginHint",
+      "description": "Resolução de email para autenticação via telemóvel ou BI",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["email", "userId"]
     }
   },
   "firestore": {
@@ -273,6 +312,18 @@
     "/assistant_conversations/{conversationId}": {
       "schema": { "$ref": "#/entities/AssistantConversation" },
       "description": "Atendimento inteligente Assistente Jeniffer"
+    },
+    "/referrals/{invitedUserId}": {
+      "schema": { "$ref": "#/entities/Referral" },
+      "description": "Registo de convites entre utilizadores"
+    },
+    "/referral_codes/{code}": {
+      "schema": { "$ref": "#/entities/ReferralCode" },
+      "description": "Resolução de código de convite para userId"
+    },
+    "/login_hints/{hintKey}": {
+      "schema": { "$ref": "#/entities/LoginHint" },
+      "description": "Resolução segura de email por telemóvel/BI"
     }
   }
 }

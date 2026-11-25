@@ -64,6 +64,7 @@ export const CURRENCIES: Record<CurrencyCode, CurrencyConfig> = {
 };
 
 export const CURRENCY_EVENT = 'baba_currency_change';
+export const CURRENCY_CHANGE_EVENT = CURRENCY_EVENT;
 
 // Fast cached number formatters for instantaneous 0ms calculation
 const numberFormatterCache: Record<string, Intl.NumberFormat> = {};
@@ -118,6 +119,12 @@ export function setActiveCurrency(code: CurrencyCode): void {
   }
 }
 
+export function convertFromKz(amountInKz: number, overrideCode?: CurrencyCode): number {
+  const code = overrideCode || currentActiveCurrency;
+  const cfg = CURRENCIES[code] || CURRENCIES.BRL;
+  return (amountInKz || 0) * cfg.rateFromKz;
+}
+
 /**
  * Ultra-fast synchronous currency formatter (< 0.01ms per call)
  */
@@ -127,4 +134,8 @@ export function formatMoney(amountInKz: number, overrideCode?: CurrencyCode): st
   const converted = (amountInKz || 0) * cfg.rateFromKz;
   const formatted = getCachedFormatter(cfg.locale).format(converted);
   return cfg.prefix ? `${cfg.symbol} ${formatted}` : `${formatted} ${cfg.symbol}`;
+}
+
+export function formatCurrencyAmount(amountInKz: number, overrideCode?: CurrencyCode): string {
+  return formatMoney(amountInKz, overrideCode);
 }

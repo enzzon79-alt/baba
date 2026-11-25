@@ -62,10 +62,6 @@ const ANGOLA_PROVINCES = [
   'Zaire'
 ];
 
-// Imagens de demonstração para o Bilhete de Identidade (caso o utilizador não tenha fotos no dispositivo)
-const DEMO_BI_FRONT = 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop&q=80';
-const DEMO_BI_BACK = 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80';
-
 export const AuthPage: React.FC<AuthPageProps> = ({
   onLoginSuccess,
   onCancel,
@@ -206,12 +202,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     } finally {
       setIsCompressingDoc(null);
     }
-  };
-
-  const handleUseDemoDocs = () => {
-    setFrontDoc(DEMO_BI_FRONT);
-    setBackDoc(DEMO_BI_BACK);
-    setBiError(null);
   };
 
   // 1. Clicar em concluir dados cadastrais -> Processamento dos dados
@@ -890,13 +880,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   <label className="text-xs font-bold text-neutral-900">
                     Fotografias do Documento (Frente e Verso): *
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleUseDemoDocs}
-                    className="text-[11px] font-bold text-[#FF6A00] hover:text-orange-700 underline cursor-pointer"
-                  >
-                    📸 Usar Fotos de Demonstração
-                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -13,10 +13,8 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() &&
-        request.auth.uid != 'kt5dFLArJzV7hCNMQ3ZvgqFokM62' &&
-        request.auth.uid != 'usr_admin' && (
-        request.auth.uid == 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2' ||
+      return isSignedIn() && (
+        request.auth.uid == 'oYHKf9Uvp5Sm0aPyUefjM8aNrrK2' ||
         (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
@@ -36,10 +34,52 @@ service cloud.firestore {
     // Collections
     // ===============================================================
 
-    // Catálogo oficial (leitura pública, escrita apenas Administrador)
+    // Verificação de ligação pública ao Firestore
+    match /test/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Resolução segura de email para login por telemóvel/BI sem expor lista de utilizadores
+    match /login_hints/{hintKey} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Códigos de convite para validação no registo
+    match /referral_codes/{code} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // Registo de convites / indicações
+    match /referrals/{invitedUserId} {
+      allow get, list: if isAdmin() || (
+        isSignedIn() &&
+        (resource.data.referrerId == request.auth.uid || resource.data.invitedUserId == request.auth.uid)
+      );
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.invitedUserId == request.auth.uid
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // Catálogo oficial (leitura pública, atualização de stock permitida em compra autenticada)
     match /products/{productId} {
       allow read: if true;
-      allow create, update, delete: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'status']) &&
+        request.resource.data.stock is number &&
+        request.resource.data.stock >= 0 &&
+        request.resource.data.stock <= resource.data.stock
+      );
     }
 
     // Contas de utilizadores e validação de Bilhete de Identidade (KYC)
@@ -70,17 +110,32 @@ service cloud.firestore {
           'updatedAt'
         ])
       );
-      allow delete: if isAdmin() && userId != 'ABcb3DyaZGMapMxuQ0KqYQdPnqT2';
+      allow delete: if isAdmin() && userId != 'oYHKf9Uvp5Sm0aPyUefjM8aNrrK2';
     }
 
-    // Carteiras digitais
+    // Carteiras digitais (proprietário, administrador ou crédito ao vendedor em compra P2P)
     match /wallets/{userId} {
       allow get, list: if isOwner(userId) || isAdmin();
       allow create: if isAdmin() || (
         isOwner(userId) &&
         request.resource.data.userId == userId
       );
-      allow update: if isAdmin() || isOwner(userId);
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.userId == userId
+      ) || (
+        isSignedIn() &&
+        request.resource.data.userId == userId &&
+        request.resource.data.availableBalance is number &&
+        request.resource.data.availableBalance >= resource.data.availableBalance &&
+        request.resource.data.totalEarned is number &&
+        request.resource.data.totalEarned >= resource.data.totalEarned &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'availableBalance',
+          'totalEarned',
+          'updatedAt'
+        ])
+      );
       allow delete: if isAdmin();
     }
 
@@ -117,7 +172,13 @@ service cloud.firestore {
     // Transações financeiras
     match /transactions/{transactionId} {
       allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        (
+          request.resource.data.userId == request.auth.uid ||
+          request.resource.data.type in ['venda_recebida', 'taxa_plataforma']
+        )
+      );
       allow update, delete: if isAdmin();
     }
 
@@ -139,6 +200,11 @@ service cloud.firestore {
         isSignedIn() &&
         resource.data.sellerId == request.auth.uid &&
         request.resource.data.sellerId == resource.data.sellerId
+      ) || (
+        isSignedIn() &&
+        resource.data.status == 'ativo' &&
+        request.resource.data.status == 'vendido' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
       );
       allow delete: if isAdmin() || (isSignedIn() && resource.data.sellerId == request.auth.uid);
     }
@@ -147,7 +213,14 @@ service cloud.firestore {
     match /user_products/{id} {
       allow get, list: if isAdmin() || (isSignedIn() && resource.data.currentOwnerId == request.auth.uid);
       allow create: if isAdmin() || (isSignedIn() && request.resource.data.currentOwnerId == request.auth.uid);
-      allow update: if isAdmin() || (isSignedIn() && resource.data.currentOwnerId == request.auth.uid);
+      allow update: if isAdmin() || (
+        isSignedIn() && resource.data.currentOwnerId == request.auth.uid
+      ) || (
+        isSignedIn() &&
+        resource.data.status != 'vendido' &&
+        request.resource.data.status == 'vendido' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+      );
       allow delete: if isAdmin();
     }
 
@@ -161,6 +234,10 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         isSignedIn() &&
         (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid)
+      ) || (
+        isSignedIn() &&
+        request.resource.data.status == 'cancelada' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'statusMessage', 'updatedAt'])
       );
       allow delete: if isAdmin();
     }
@@ -168,7 +245,14 @@ service cloud.firestore {
     // Notificações
     match /notifications/{notificationId} {
       allow get, list: if isAdmin() || (isSignedIn() && resource.data.recipientId == request.auth.uid);
-      allow create: if isAdmin() || (isSignedIn() && request.resource.data.recipientId == request.auth.uid);
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        (
+          request.resource.data.recipientId == request.auth.uid ||
+          request.resource.data.recipientId == 'oYHKf9Uvp5Sm0aPyUefjM8aNrrK2' ||
+          request.resource.data.type in ['venda', 'compra', 'negociacao']
+        )
+      );
       allow update: if isAdmin() || (isSignedIn() && resource.data.recipientId == request.auth.uid);
       allow delete: if isAdmin();
     }

@@ -10,6 +10,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  onIdTokenChanged,
   updateProfile,
   type Auth,
   type User as FirebaseUser
@@ -38,14 +39,18 @@ import {
   type DocumentData
 } from 'firebase/firestore';
 
+export const FIREBASE_PROJECT_ID = 'lucano-375bf';
+
 export const firebaseConfig = {
-  apiKey: 'AIzaSyBAi4HqZ5QecgGl2TGPmrEBGwGu8u7edKs',
-  authDomain: 'baba-fde57.firebaseapp.com',
-  projectId: 'baba-fde57',
-  storageBucket: 'baba-fde57.firebasestorage.app',
-  messagingSenderId: '601963979331',
-  appId: '1:601963979331:web:34f886a20767f1b33e6af6'
+  apiKey: 'AIzaSyBuhej6-6idJS2cPEdaad66Svr4wffvBfc',
+  authDomain: 'lucano-375bf.firebaseapp.com',
+  projectId: 'lucano-375bf',
+  storageBucket: 'lucano-375bf.firebasestorage.app',
+  messagingSenderId: '883446347560',
+  appId: '1:883446347560:web:419206bad1aefecee6021d'
 };
+
+export const FIREBASE_WEB_API_KEY = firebaseConfig.apiKey;
 
 // Initialize Firebase safely
 export const firebaseApp =
@@ -80,6 +85,16 @@ function createSafariSafeFirestore(): Firestore {
 export const auth = createSafariSafeAuth();
 export const firestore = createSafariSafeFirestore();
 export const db = firestore;
+
+export async function getFirebaseIdToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    return await user.getIdToken();
+  } catch {
+    return null;
+  }
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -168,7 +183,7 @@ export function handleFirestoreError(
 
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(firestore, 'products', '__connection_check__'));
+    await getDocFromServer(doc(firestore, 'test', 'connection'));
     return true;
   } catch (error: any) {
     const msg = String(error?.message || '');
@@ -185,6 +200,7 @@ export {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  onIdTokenChanged,
   updateProfile,
   collection,
   doc,
